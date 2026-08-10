@@ -1,0 +1,1 @@
+"""POC Kanini application package."""

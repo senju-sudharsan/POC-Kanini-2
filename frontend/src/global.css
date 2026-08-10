@@ -1,0 +1,7 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+:root { --radius: 0.625rem; }
+html, body, #root { min-height: 100%; margin: 0; }
+body { overscroll-behavior: none; background: rgb(38 38 38); }
+[data-radix-scroll-area-viewport] { overscroll-behavior: none; }
