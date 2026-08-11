@@ -30,9 +30,15 @@ class RagService:
         self._store.upsert(chunks, await self._embeddings.embed_documents(chunks))
         return len(chunks)
 
-    async def answer(self, question: str, document_id: str | None = None) -> RagResponse:
+    async def retrieve_evidence(self, question: str, document_id: str | None = None) -> tuple[list[RetrievedChunk], list[Citation]]:
+        """Retrieve relevant document chunks and formatted citations without invoking LLM answer generation."""
         sources = await self._retrieval.retrieve(question, self._settings.rag_top_k, document_id)
         citations = [_citation(source) for source in sources]
+        return sources, citations
+
+    async def answer(self, question: str, document_id: str | None = None) -> RagResponse:
+        """Retrieve evidence and generate a Gemini-grounded answer with citations for single-endpoint Q&A."""
+        sources, citations = await self.retrieve_evidence(question, document_id)
         if not sources:
             return RagResponse(answer="I could not find enough retrieved evidence to answer that question.", citations=[], retrieved_sources=[])
         context = "\n\n".join(f"SOURCE [{citation.label}]\n{source.chunk.text}" for citation, source in zip(citations, sources))

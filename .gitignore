@@ -77,9 +77,18 @@ temp/
 
 # Keep source/sample data tracked if intentionally committed.
 # Ignore generated runtime/vector-store data.
+
 data/chroma/
 data/vector_store/
 data/embeddings/
+
+# Local test/uploaded documents
+data/test/
+data/uploads/
+
+# Local database files
+*.sqlite3
+*.db
 
 # ================================
 # Reference repository

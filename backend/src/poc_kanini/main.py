@@ -1,4 +1,5 @@
 import pathlib
+from typing import Any
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
@@ -12,9 +13,16 @@ from poc_kanini.models.chat import ChatRequest, ChatResponse
 from poc_kanini.models.documents import ProcessedDocument
 from poc_kanini.rag.service import RagService
 from poc_kanini.rag.vector_store import ChromaVectorStore
+from poc_kanini.ml.service import MlService
+from poc_kanini.ml.models import DatasetProfile, TrainResponse, TrainRequest, PredictRequest, PredictResponse
+from poc_kanini.multimodal.service import MultimodalService
+from poc_kanini.multimodal.models import MultimodalAnalysis
+from poc_kanini.multimodal.validator import ImageValidationError
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
+ml_service_instance = MlService()
+multimodal_service_instance = MultimodalService(settings)
 
 
 @app.get("/api/health")
@@ -87,6 +95,75 @@ async def document_chat(request: dict[str, str]) -> dict[str, object]:
         return (await rag_service().answer(question, request.get("document_id"))).model_dump()
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.post("/api/ml/profile", response_model=DatasetProfile)
+async def ml_profile(request: list[dict[str, Any]]) -> DatasetProfile:
+    """Extract structural details and statistics from a tabular dataset."""
+
+    try:
+        return ml_service_instance.profile(request)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=500, detail="An error occurred during profiling.") from error
+
+
+@app.post("/api/ml/train", response_model=TrainResponse)
+async def ml_train(request: TrainRequest) -> TrainResponse:
+    """Train a baseline classifier or regressor model on a custom dataset."""
+
+    try:
+        return ml_service_instance.train(
+            data=request.data,
+            target=request.target,
+            task=request.task,
+            model_type=request.model_type,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+@app.post("/api/ml/predict", response_model=PredictResponse)
+async def ml_predict(request: PredictRequest) -> PredictResponse:
+    """Generate model predictions using a cached process-lifetime estimator."""
+
+    try:
+        return ml_service_instance.predict(
+            model_id=request.model_id,
+            data=request.data,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=500, detail="An error occurred during prediction.") from error
+
+@app.post("/api/multimodal/analyze", response_model=MultimodalAnalysis)
+async def multimodal_analyze(
+    file: UploadFile = File(...),
+    question: str = "Describe what you see in this image.",
+) -> MultimodalAnalysis:
+    """Analyse an uploaded image using Gemini multimodal understanding."""
+
+    content = await file.read()
+    filename = file.filename or "upload"
+    mime_type = file.content_type or ""
+    try:
+        return await multimodal_service_instance.analyze(
+            content=content,
+            mime_type=mime_type,
+            question=question,
+            filename=filename,
+        )
+    except ImageValidationError as error:
+        status = 413 if "exceeds" in str(error) else 400
+        raise HTTPException(status_code=status, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=500, detail="An error occurred during image analysis.") from error
 
 
 def frontend_build_path() -> pathlib.Path:

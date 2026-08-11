@@ -66,4 +66,4 @@ is stable, so it cannot destabilize the working assistant.
 The former Data Engineering plan is obsolete: enterprise data warehouse, raw
 and staging layers, ETL, SCD Types 1 and 2, star schema, OLAP, dimensional
 modelling, and warehouse-oriented PostgreSQL architecture are out of active
-scope. Existing artifacts are retained for review but must not be expanded.
+scope. Obsolete directories and database schemas under root folders have been removed. Any remaining reference material under `gemini-base/` is preserved for reference only.

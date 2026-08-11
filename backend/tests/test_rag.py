@@ -82,6 +82,16 @@ def test_citation_is_derived_from_retrieved_chunk():
     assert citation.chunk_id == "one"
 
 
+def test_retrieve_evidence_decoupled_from_llm():
+    """retrieve_evidence must return chunks and citations without requiring Gemini API key or LLM generation."""
+    service = RagService(Settings(gemini_api_key=None), FakeStore([chunk()]), embeddings=FakeEmbeddings())
+    sources, citations = asyncio.run(service.retrieve_evidence("annual leave", document_id="doc-1"))
+    assert len(sources) == 1
+    assert sources[0].chunk.text == "The annual leave allowance is twenty days."
+    assert len(citations) == 1
+    assert citations[0].label == "policy.pdf — Page 2"
+
+
 def test_grounded_response_uses_mocked_gemini_and_returns_retrieved_citation(monkeypatch):
     class FakeModels:
         async def generate_content(self, **kwargs):
