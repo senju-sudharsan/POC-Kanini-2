@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from poc_kanini.core.config import get_settings
 from poc_kanini.documents.processor import DocumentProcessor, DocumentValidationError
-from poc_kanini.graphs.chat import chat_graph
+from poc_kanini.graphs.chat import chat_graph, hybrid_chat_graph
 from poc_kanini.models.chat import ChatRequest, ChatResponse
 from poc_kanini.models.documents import ProcessedDocument
 from poc_kanini.rag.service import RagService
@@ -34,20 +34,28 @@ async def health() -> JSONResponse:
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
-    """Run the Phase 1 text conversation through the Gemini LangGraph workflow."""
+    """Run conversation through the Phase 6 Hybrid Agent LangGraph workflow."""
 
     messages = [
         HumanMessage(content=item.content) if item.role == "user" else AIMessage(content=item.content)
         for item in request.messages
     ]
+    attachments = [att.model_dump() for att in request.attachments]
+
     try:
-        result = await chat_graph.ainvoke({"messages": messages})
+        result = await hybrid_chat_graph.ainvoke({
+            "messages": messages,
+            "attachments": attachments,
+            "step_count": 0,
+            "max_steps": 5,
+        })
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except Exception as error:
-        raise HTTPException(status_code=502, detail="Gemini could not complete the request.") from error
+        raise HTTPException(status_code=502, detail="The assistant could not complete the request.") from error
 
-    return ChatResponse(message={"role": "assistant", "content": str(result["messages"][-1].content)})
+    final_content = str(result["messages"][-1].content)
+    return ChatResponse(message={"role": "assistant", "content": final_content})
 
 
 @app.post("/api/documents/process", response_model=ProcessedDocument)

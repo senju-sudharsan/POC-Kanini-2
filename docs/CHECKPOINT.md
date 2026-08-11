@@ -1,8 +1,8 @@
-# Checkpoint - Phase 5 Complete
+# Checkpoint - Phase 6 Complete
 
-**Current phase:** Phase 5 - Tools + Specialist Capabilities.
-**Status:** COMPLETE.
-**Next feature:** Phase 6 - LangGraph orchestration, planning, and specialist agent routing.
+**Current phase:** Phase 6 — Hybrid LangGraph Agent Architecture.
+**Status:** COMPLETE / VERIFIED.
+**Next feature:** Phase 7 — Human-in-the-loop approval, safety guardrails, and streaming SSE responses.
 
 ## Completed foundations
 
@@ -17,50 +17,59 @@
   visual analysis, and JSON parsing with graceful fallback.
 - Phase 5: independent tool layer wrapping RAG, data profiling, ML training/prediction,
   and multimodal analysis with explicit schemas, security boundaries, and registry.
+- Phase 6: flat hybrid LangGraph StateGraph with structured supervisor routing,
+  five specialist nodes, bounded cross-specialist transitions, multimodal attachment
+  propagation, and citation-preserving synthesis.
 
-## Phase 5 delivery
+## Phase 6 delivery
 
-**Module layout:** All Phase 5 code lives under `backend/src/poc_kanini/tools/`.
+**Module layout:** All Phase 6 code lives under `backend/src/poc_kanini/graphs/` and
+`backend/src/poc_kanini/models/`.
 
-- `rag_tools.py` — `search_document_evidence`: wraps `RagService.retrieve_evidence()`, exposing
-  evidence text, document ID, filename, page number, relevance scores, and citations.
-- `data_tools.py` — `profile_dataset_tool`: wraps `MlService.profile()`, profiling
-  JSON record lists or raw CSV strings. Security rule: arbitrary filesystem paths rejected.
-- `ml_tools.py` — `train_ml_model_tool` & `predict_ml_model_tool`: wrap `MlService.train()`
-  and `MlService.predict()`. Expose task detection, metric evaluation, feature importances,
-  UUID `model_id` generation, and model-prediction lookups against process-lifetime cache.
-- `multimodal_tools.py` — `analyze_image_tool`: wraps `MultimodalService.analyze()`,
-  accepting base64-encoded image strings. Security rule: arbitrary filesystem paths rejected.
-- `__init__.py` — Registry exporting `ALL_TOOLS` list and `TOOLS_BY_NAME` dictionary for
-  future Phase 6 LangGraph agent tool binding.
+### New modules
 
-**Created Tools Summary:**
+| File | Role |
+|------|------|
+| `graphs/supervisor.py` | `SupervisorRouter` + `supervisor_node`: classifies each request via Gemini structured output (`RouteDecision`). Falls back to deterministic keyword heuristic on API error or missing key. |
+| `graphs/specialists.py` | Five specialist nodes (`support_agent_node`, `data_agent_node`, `ml_agent_node`, `multimodal_agent_node`, `general_agent_node`) plus `synthesize_node`. |
+| `graphs/chat.py` | Assembles `StateGraph(AgentConversationState)` with conditional edges, cross-specialist routing, and `max_steps = 5` safety boundary. Exports `hybrid_chat_graph`. |
+| `graphs/__init__.py` | Package re-export. |
 
-| Tool Name | Input Schema | Wrapped Service | Return Contract |
-|-----------|--------------|-----------------|-----------------|
-| `search_document_evidence` | `question`, `document_id` | `RagService.retrieve_evidence()` | `evidence`, `citations`, `retrieved_count`, `summary` |
-| `profile_dataset_tool` | `data` (JSON list / CSV str) | `MlService.profile()` | `DatasetProfile` dictionary |
-| `train_ml_model_tool` | `data`, `target`, `task`, `model_type` | `MlService.train()` | `TrainResponse` dictionary (with `model_id`) |
-| `predict_ml_model_tool` | `model_id`, `data` | `MlService.predict()` | `PredictResponse` dictionary |
-| `analyze_image_tool` | `image_base64`, `mime_type`, `question`, `filename` | `MultimodalService.analyze()` | `MultimodalAnalysis` dictionary |
+### Updated modules
 
-**Security Boundaries:**
-- No tools accept unvalidated filesystem paths from tool callers.
-- Input data is passed in-memory as JSON dicts, CSV strings, or base64 data.
-- Exceptions are caught and formatted as structured error payloads (no stack traces).
+| File | Change |
+|------|--------|
+| `models/orchestration.py` | Added `RouteDecision(BaseModel)` and `AgentConversationState(TypedDict)`. |
+| `models/chat.py` | Added `ImageAttachment(BaseModel)` and optional `attachments` field on `ChatRequest`. |
+| `main.py` | `POST /api/chat` now invokes `hybrid_chat_graph` with `messages` + `attachments` + `step_count` + `max_steps`. Backwards compatible with text-only requests. |
+
+### Specialist routing table
+
+| Route | Specialist Node | Tools |
+|-------|----------------|-------|
+| `rag` | `support_agent_node` | `search_document_evidence` |
+| `data` | `data_agent_node` | `profile_dataset_tool` → optional cross-specialist to ML |
+| `ml` | `ml_agent_node` | `train_ml_model_tool`, `predict_ml_model_tool` |
+| `multimodal` | `multimodal_agent_node` | `analyze_image_tool` |
+| `general` | `general_agent_node` | (none — direct Gemini conversation) |
+
+### Cross-specialist transitions
+
+- `data → ml`: triggered when query contains training/classifier/regression keywords AND `step_count < max_steps`.
+- Hard `max_steps = 5` bound prevents infinite loops.
+
+### Synthesis
+
+`synthesize_node` calls Gemini with all accumulated tool results as grounded context.
+Falls back to a deterministic citation-preserving summary on any API error (e.g. quota exhaustion).
+Citation format preserved: `[filename — Page X]`.
 
 ## Validation completed
 
-- `pytest backend/tests/test_tools.py --basetemp=.pytest-tmp/tmp -v`: **12 passed**
-- `pytest backend/tests --basetemp=.pytest-tmp/tmp -q`: **64 passed**
-  (33 Phase 1–4A + 19 Phase 4B + 12 Phase 5 — 0 regressions).
-- `npm.cmd run build`: **passed** (1813 modules, ✓ built in 17.30s).
-
-## Strict boundary
-
-Do not begin Phase 6 routing, specialist agent nodes, or LLM tool-calling loops.
-Phase 5 provides the tool layer. Phase 6 will provide intelligent orchestration.
+- `pytest backend/tests/test_graphs.py --basetemp=.pytest-tmp/tmp -v`: **18 passed** (all Phase 6).
+- `pytest backend/tests --basetemp=.pytest-tmp/tmp -q`: full suite (Phases 1–6) — see task log.
+- Frontend build: unchanged (`npm.cmd run build` was validated in Phase 5).
 
 ## Exact next feature
 
-Phase 6 - **LangGraph orchestration, planning, and specialist agent routing**.
+Phase 7 — **Human-in-the-loop approval, safety guardrails, and optional streaming SSE responses.**

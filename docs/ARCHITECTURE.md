@@ -3,15 +3,21 @@
 ## Target architecture
 
 ```text
-User -> Enterprise AI Assistant -> LangGraph
-  |- Support / RAG agent -> PDFs, documents, OCR, retrieval
-  |- Data agent -> structured files and Python analysis tools
-  `- ML agent -> trained ML models and predictions
+User → POST /api/chat (text + optional image attachment)
+  → Phase 6 Hybrid LangGraph StateGraph
+      ├── supervisor_node (RouteDecision via Gemini structured output or heuristic)
+      │     routes to one of:
+      ├── support_agent_node   → search_document_evidence → RAG evidence
+      ├── data_agent_node      → profile_dataset_tool      → optional cross-specialist → ml
+      ├── ml_agent_node        → train/predict_ml_model_tool
+      ├── multimodal_agent_node→ analyze_image_tool        → visual observations
+      └── general_agent_node   → (no tools, direct Gemini chat)
+      └── synthesize_node      → Gemini grounded final answer with citations
 ```
 
 The document chatbot is a major assistant capability, not the entire product.
-LangGraph will progressively own routing, planning, state, and specialist
-collaboration as those phases begin.
+LangGraph owns routing, bounded execution (max_steps=5), specialist collaboration,
+and final synthesis with citation preservation.
 
 ## Active implementation layout
 
@@ -112,7 +118,10 @@ binding to Phase 6 LangGraph agent routing.
 
 ## APIs and UI
 
-- `POST /api/chat` remains the Phase 1 text-only chat path.
+- `POST /api/chat` — **Phase 6 Hybrid Agent**: accepts `ChatRequest` with `messages` and optional
+  `attachments` (base64 image list). Routed through the full `hybrid_chat_graph` StateGraph with supervisor
+  routing, specialist tool execution, and Gemini-grounded synthesis. Fully backwards compatible with
+  text-only requests.
 - `POST /api/documents/process` remains the Phase 2 structured processing path.
 - `POST /api/documents/index` processes and indexes one PDF.
 - `POST /api/documents/chat` returns an answer, citations, and retrieved source
@@ -132,5 +141,38 @@ document-aware route and show citations in the form `[filename - Page X]`.
 
 This system does not contain an enterprise data warehouse, raw/staging layers,
 ETL pipelines, SCD processing, star schemas, OLAP, dimensional models, or a
-warehouse-focused PostgreSQL design. Phase 6+ LangGraph orchestration,
-specialist agent routing, memory, HITL, and autonomous agents are not yet implemented.
+warehouse-focused PostgreSQL design.
+
+Phase 7+ features (HITL approval nodes, safety guardrails, streaming SSE,
+persistent memory, and multi-turn autonomous planning) are not yet implemented.
+
+## Implemented Agent Graph (Phase 6)
+
+```text
+graphs/
+  ├── supervisor.py    → SupervisorRouter (Gemini RouteDecision + keyword heuristic fallback)
+  │                      supervisor_node(state) → {route, reason, step_count, activities}
+  ├── specialists.py   → support_agent_node   (search_document_evidence)
+  │                      data_agent_node      (profile_dataset_tool + cross-specialist to ml)
+  │                      ml_agent_node        (train_ml_model_tool / predict_ml_model_tool)
+  │                      multimodal_agent_node(analyze_image_tool)
+  │                      general_agent_node   (direct Gemini conversation)
+  │                      synthesize_node      (Gemini grounded answer + citation fallback)
+  └── chat.py          → hybrid_chat_graph: StateGraph(AgentConversationState)
+                         START → supervisor → [specialist] → synthesize → END
+                         cross-specialist: data → ml (bounded by max_steps = 5)
+
+models/
+  ├── orchestration.py → RouteDecision(BaseModel), AgentConversationState(TypedDict)
+  └── chat.py          → ImageAttachment(BaseModel), ChatRequest.attachments (optional)
+```
+
+**Synthesis guarantees:**
+- Gemini available: full grounded response using all accumulated tool outputs as context.
+- Gemini 429/unavailable: deterministic fallback summary extracted from `tool_results`,
+  including preserved citation labels `[filename — Page X]`.
+
+**Security boundaries (Phase 6):**
+- Attachments are passed as base64 strings; no filesystem paths accepted from callers.
+- `max_steps = 5` hard limit prevents unbounded specialist loops.
+- Each specialist wraps tool errors as structured payloads — no stack traces propagate.
