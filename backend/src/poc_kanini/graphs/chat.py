@@ -1,9 +1,12 @@
-"""Phase 6 Hybrid Agent StateGraph assembly and compilation."""
+"""Phase 7 Stateful Hybrid Agent StateGraph assembly with Reflection, HITL, and Checkpointing."""
 
+import logging
 from typing import Literal
 
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from poc_kanini.graphs.reflection import reflection_node
 from poc_kanini.graphs.specialists import (
     data_agent_node,
     general_agent_node,
@@ -14,6 +17,8 @@ from poc_kanini.graphs.specialists import (
 )
 from poc_kanini.graphs.supervisor import supervisor_node
 from poc_kanini.models.orchestration import AgentConversationState
+
+logger = logging.getLogger(__name__)
 
 
 def route_supervisor_decision(state: AgentConversationState) -> str:
@@ -30,18 +35,27 @@ def route_supervisor_decision(state: AgentConversationState) -> str:
     return "general_agent"
 
 
-def route_specialist_transition(state: AgentConversationState) -> str:
-    """Determine whether to transition to another specialist (e.g. Data -> ML) or synthesize."""
+def route_reflection_decision(state: AgentConversationState) -> str:
+    """Determine routing after reflection: retry, cross-specialist, approval pause, or synthesis."""
     step_count = state.get("step_count", 0)
     max_steps = state.get("max_steps", 5)
 
     if step_count >= max_steps:
         return "synthesize"
 
+    # 1. Pause for Human Approval if required and pending
+    if state.get("approval_required") and state.get("approval_status") not in ("approved", "rejected"):
+        return "synthesize"
+
+    reflection = state.get("reflection") or {}
+
+    # 2. Bounded Retry Routing
+    if reflection.get("needs_retry"):
+        return route_supervisor_decision(state)
+
+    # 3. Cross-Specialist Routing (Data -> ML)
     route = state.get("route", "")
-    # Handle cross-specialist Data -> ML transition
     if route == "ml":
-        # Check if we haven't already run ML agent twice
         tool_results = state.get("tool_results") or []
         ml_tool_run = any(item.get("tool") in ("train_ml_model_tool", "predict_ml_model_tool") for item in tool_results)
         if not ml_tool_run:
@@ -60,6 +74,7 @@ builder.add_node("data_agent", data_agent_node)
 builder.add_node("ml_agent", ml_agent_node)
 builder.add_node("multimodal_agent", multimodal_agent_node)
 builder.add_node("general_agent", general_agent_node)
+builder.add_node("reflection", reflection_node)
 builder.add_node("synthesize", synthesize_node)
 
 # Add edges
@@ -77,35 +92,36 @@ builder.add_conditional_edges(
     },
 )
 
+# All specialist nodes proceed to reflection node
+builder.add_edge("support_agent", "reflection")
+builder.add_edge("data_agent", "reflection")
+builder.add_edge("ml_agent", "reflection")
+builder.add_edge("multimodal_agent", "reflection")
+builder.add_edge("general_agent", "reflection")
+
+# Reflection node routes to retry specialist, cross-specialist, or synthesis
 builder.add_conditional_edges(
-    "support_agent",
-    route_specialist_transition,
-    {"ml_agent": "ml_agent", "synthesize": "synthesize"},
+    "reflection",
+    route_reflection_decision,
+    {
+        "support_agent": "support_agent",
+        "data_agent": "data_agent",
+        "ml_agent": "ml_agent",
+        "multimodal_agent": "multimodal_agent",
+        "synthesize": "synthesize",
+    },
 )
 
-builder.add_conditional_edges(
-    "data_agent",
-    route_specialist_transition,
-    {"ml_agent": "ml_agent", "synthesize": "synthesize"},
-)
-
-builder.add_conditional_edges(
-    "ml_agent",
-    route_specialist_transition,
-    {"ml_agent": "ml_agent", "synthesize": "synthesize"},
-)
-
-builder.add_conditional_edges(
-    "multimodal_agent",
-    route_specialist_transition,
-    {"ml_agent": "ml_agent", "synthesize": "synthesize"},
-)
-
-builder.add_edge("general_agent", "synthesize")
 builder.add_edge("synthesize", END)
 
-# Compile the graph
-hybrid_chat_graph = builder.compile(name="phase-6-hybrid-agent")
+# In-memory checkpointer for thread-isolated state persistence
+memory_checkpointer = MemorySaver()
 
-# Backwards compatibility export for chat endpoint
+# Compile stateful graph with checkpointer
+hybrid_chat_graph = builder.compile(
+    checkpointer=memory_checkpointer,
+    name="phase-7-stateful-hybrid-agent",
+)
+
+# Backwards compatibility export
 chat_graph = hybrid_chat_graph

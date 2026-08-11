@@ -334,11 +334,56 @@ async def synthesize_node(state: AgentConversationState) -> dict[str, Any]:
     formatted_context = "\n\n".join(context_parts) if context_parts else "No tools were required."
     prompt = f"User Request: {user_query}\n\nAccumulated Tool Evidence & Results:\n{formatted_context}"
 
+    # Check for HITL Interrupted / Rejected States
+    approval_status = state.get("approval_status")
+    approval_required = state.get("approval_required", False)
+    approval_id = state.get("approval_id")
+    approval_reason = state.get("approval_reason")
+
+    if approval_status == "rejected":
+        ai_message = AIMessage(
+            content=f"The requested operation was rejected by the human reviewer (approval_id: `{approval_id}`). "
+                    f"No model training or action was performed."
+        )
+        messages.append(ai_message)
+        return {
+            "messages": messages,
+            "activities": activities,
+            "approval_required": False,
+            "approval_id": approval_id,
+            "approval_reason": approval_reason,
+        }
+
+    if approval_required and approval_status != "approved":
+        ai_message = AIMessage(
+            content=f"⚠️ **Human Approval Required**\n\n"
+                    f"This operation requires human confirmation before execution.\n"
+                    f"- **Approval ID:** `{approval_id}`\n"
+                    f"- **Reason:** {approval_reason}\n\n"
+                    f"Please submit approval or rejection to proceed."
+        )
+        messages.append(ai_message)
+        return {
+            "messages": messages,
+            "activities": activities,
+            "approval_required": True,
+            "approval_id": approval_id,
+            "approval_reason": approval_reason,
+        }
+
     answer_text = ""
 
     def _build_fallback_answer(results: list[dict]) -> str:
-        """Build a deterministic plain-text summary from tool results, including citations."""
+        """Build a deterministic plain-text summary from tool results, including citations and message context."""
         if not results:
+            # If no tools ran, check if previous messages exist in state to retain context
+            prev_user_texts = [
+                str(getattr(m, "content", "")) for m in messages[:-1]
+                if getattr(m, "type", "") != "ai" and getattr(m, "role", "") != "assistant"
+            ]
+            if prev_user_texts:
+                context_str = " ".join(prev_user_texts)
+                return f"Based on our conversation context: {context_str}. (Re: {user_query})"
             return "Hello! I am your Enterprise AI Assistant. How can I help you today?"
         summaries = []
         for item in results:
@@ -394,4 +439,5 @@ async def synthesize_node(state: AgentConversationState) -> dict[str, Any]:
     return {
         "messages": messages,
         "activities": activities,
+        "approval_required": False,
     }

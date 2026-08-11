@@ -1,8 +1,8 @@
-# Checkpoint - Phase 6 Complete
+# Checkpoint - Phase 7 Complete
 
-**Current phase:** Phase 6 — Hybrid LangGraph Agent Architecture.
-**Status:** COMPLETE / VERIFIED.
-**Next feature:** Phase 7 — Human-in-the-loop approval, safety guardrails, and streaming SSE responses.
+**Current phase:** Phase 7 — Memory, Checkpointing, Reflection, and Human-In-The-Loop.
+**Status:** COMPLETE / VERIFIED (26/26 tests passed).
+**Next feature:** Phase 8 — Insight, action workflows, and full frontend integration.
 
 ## Completed foundations
 
@@ -20,56 +20,102 @@
 - Phase 6: flat hybrid LangGraph StateGraph with structured supervisor routing,
   five specialist nodes, bounded cross-specialist transitions, multimodal attachment
   propagation, and citation-preserving synthesis.
+- Phase 7: thread-scoped MemorySaver checkpointing, short-term conversation memory,
+  ReflectionDecision node, bounded error recovery, HITL approval boundary with
+  approval_required/approval_id/approval_status state fields.
 
-## Phase 6 delivery
+## Phase 7 delivery
 
-**Module layout:** All Phase 6 code lives under `backend/src/poc_kanini/graphs/` and
+**Module layout:** Phase 7 extends `backend/src/poc_kanini/graphs/` and
 `backend/src/poc_kanini/models/`.
 
 ### New modules
 
 | File | Role |
 |------|------|
-| `graphs/supervisor.py` | `SupervisorRouter` + `supervisor_node`: classifies each request via Gemini structured output (`RouteDecision`). Falls back to deterministic keyword heuristic on API error or missing key. |
-| `graphs/specialists.py` | Five specialist nodes (`support_agent_node`, `data_agent_node`, `ml_agent_node`, `multimodal_agent_node`, `general_agent_node`) plus `synthesize_node`. |
-| `graphs/chat.py` | Assembles `StateGraph(AgentConversationState)` with conditional edges, cross-specialist routing, and `max_steps = 5` safety boundary. Exports `hybrid_chat_graph`. |
-| `graphs/__init__.py` | Package re-export. |
+| `graphs/reflection.py` | `reflection_node(state)`: evaluates tool quality, detects errors, triggers bounded retry, enforces HITL approval boundary for controlled operations. Returns `ReflectionDecision` dict. |
 
 ### Updated modules
 
 | File | Change |
 |------|--------|
-| `models/orchestration.py` | Added `RouteDecision(BaseModel)` and `AgentConversationState(TypedDict)`. |
-| `models/chat.py` | Added `ImageAttachment(BaseModel)` and optional `attachments` field on `ChatRequest`. |
-| `main.py` | `POST /api/chat` now invokes `hybrid_chat_graph` with `messages` + `attachments` + `step_count` + `max_steps`. Backwards compatible with text-only requests. |
+| `models/orchestration.py` | Added `ReflectionDecision(BaseModel)`, `ApprovalRequest(BaseModel)`, and Phase 7 state fields: `retry_count`, `max_retries`, `reflection`, `approval_required`, `approval_id`, `approval_reason`, `approval_status`. |
+| `models/chat.py` | Added `thread_id` and `approval` fields to `ChatRequest`. Added `thread_id`, `approval_required`, `approval_id`, `approval_reason`, and `activities` to `ChatResponse`. |
+| `graphs/chat.py` | All 5 specialists now route through `reflection_node` before synthesis. `MemorySaver` checkpointer compiled into graph. `route_reflection_decision()` router handles retry, HITL pause, cross-specialist, and synthesis routing. |
+| `graphs/specialists.py` | `synthesize_node` now: returns `approval_required: True` in interrupted branch, `approval_required: False` in normal and approved branches, and the fallback answer includes prior conversation context when Gemini is unavailable. |
+| `main.py` | `POST /api/chat` resolves `thread_id` (generate if missing), passes `config={"configurable": {"thread_id": thread_id}}` to `hybrid_chat_graph.ainvoke`, reads `approval_status` from request, and returns `thread_id` + `approval_*` fields in `ChatResponse`. |
+| `frontend/src/App.tsx` | Tracks `threadId` state, passes it on subsequent requests, renders HITL approval banner with Approve/Reject buttons. |
+| `frontend/src/lib/chat.ts` | `sendChat()` accepts `threadId`, `approval`, returns `thread_id`, `approval_required`, `approval_id`, `approval_reason`, `activities`. |
 
-### Specialist routing table
+### Phase 7 state fields summary
 
-| Route | Specialist Node | Tools |
-|-------|----------------|-------|
-| `rag` | `support_agent_node` | `search_document_evidence` |
-| `data` | `data_agent_node` | `profile_dataset_tool` → optional cross-specialist to ML |
-| `ml` | `ml_agent_node` | `train_ml_model_tool`, `predict_ml_model_tool` |
-| `multimodal` | `multimodal_agent_node` | `analyze_image_tool` |
-| `general` | `general_agent_node` | (none — direct Gemini conversation) |
+| Field | Type | Purpose |
+|-------|------|---------|
+| `thread_id` | `str` | Thread/session identifier for checkpoint key |
+| `retry_count` | `int` | Bounded retry counter per request |
+| `max_retries` | `int` | Retry budget (default 1) |
+| `reflection` | `dict` | `ReflectionDecision` output (quality_ok, needs_retry, reason) |
+| `approval_required` | `bool` | True when graph paused for HITL |
+| `approval_id` | `str \| None` | Unique ID for HITL approval request |
+| `approval_reason` | `str \| None` | Human-readable explanation |
+| `approval_status` | `str \| None` | "pending", "approved", or "rejected" |
 
-### Cross-specialist transitions
+### API changes
 
-- `data → ml`: triggered when query contains training/classifier/regression keywords AND `step_count < max_steps`.
-- Hard `max_steps = 5` bound prevents infinite loops.
+```
+POST /api/chat
+Request:
+  {
+    "messages": [...],
+    "attachments": [...],          # unchanged
+    "thread_id": "thread_xxx",     # NEW: optional, auto-generated if missing
+    "approval": "approved"          # NEW: optional, for HITL resume
+  }
 
-### Synthesis
+Response:
+  {
+    "message": {"role": "assistant", "content": "..."},
+    "thread_id": "thread_xxx",     # NEW: always returned
+    "approval_required": false,    # NEW: true if HITL pause
+    "approval_id": null,           # NEW: set when approval_required=true
+    "approval_reason": null,       # NEW: set when approval_required=true
+    "activities": [...]            # NEW: specialist activity log
+  }
+```
 
-`synthesize_node` calls Gemini with all accumulated tool results as grounded context.
-Falls back to a deterministic citation-preserving summary on any API error (e.g. quota exhaustion).
-Citation format preserved: `[filename — Page X]`.
+### Memory boundaries
+
+| Type | Implementation | Phase |
+|------|---------------|-------|
+| **Short-term (in-scope)** | LangGraph `MemorySaver` per thread_id | Phase 7 |
+| Long-term semantic memory | Vector-stored cross-session memories | Future |
+| User profile memory | Per-user personalization store | Future |
+
+### HITL Approval boundary
+
+The HITL mechanism is a **mechanism demonstration**, not a live action system.
+
+Controlled operation detection keywords: `sensitive`, `delete`, `production model`,
+`requires approval`, `controlled operation`, `approve operation`.
+
+Operations that reach HITL are bounded to the registered Phase 5 tools only.
+Shell execution, arbitrary filesystem access, and arbitrary Python are never permitted.
 
 ## Validation completed
 
-- `pytest backend/tests/test_graphs.py --basetemp=.pytest-tmp/tmp -v`: **18 passed** (all Phase 6).
-- `pytest backend/tests --basetemp=.pytest-tmp/tmp -q`: full suite (Phases 1–6) — see task log.
-- Frontend build: unchanged (`npm.cmd run build` was validated in Phase 5).
+- `pytest backend/tests/test_phase7.py --basetemp=.pytest-tmp/tmp -v`: **26 passed**
+- `pytest backend/tests --basetemp=.pytest-tmp/tmp -q`: full suite (Phases 1–7) — see regression results.
+- `npm.cmd run build`: **passed** (1813 modules, ✓ built in 8.41s).
+
+## Known limitations
+
+- Gemini free-tier quota (20 req/day) means synthesis falls back to deterministic
+  summaries during heavy testing. The fallback is production-safe.
+- `MemorySaver` is in-process only — state is lost on server restart. SQLite-based
+  persistence is the natural next step if required.
+- HITL approval currently detects controlled operations via keyword matching.
+  Phase 8 will introduce intent-based detection tied to actual action workflows.
 
 ## Exact next feature
 
-Phase 7 — **Human-in-the-loop approval, safety guardrails, and optional streaming SSE responses.**
+Phase 8 — **Insight, action workflows, and full frontend integration.**

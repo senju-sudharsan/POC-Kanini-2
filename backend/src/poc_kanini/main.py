@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from poc_kanini.core.config import get_settings
 from poc_kanini.documents.processor import DocumentProcessor, DocumentValidationError
 from poc_kanini.graphs.chat import chat_graph, hybrid_chat_graph
-from poc_kanini.models.chat import ChatRequest, ChatResponse
+from poc_kanini.models.chat import ChatMessage, ChatRequest, ChatResponse
 from poc_kanini.models.documents import ProcessedDocument
 from poc_kanini.rag.service import RagService
 from poc_kanini.rag.vector_store import ChromaVectorStore
@@ -32,30 +32,52 @@ async def health() -> JSONResponse:
     return JSONResponse({"status": "ok", "environment": settings.environment})
 
 
+import uuid
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
-    """Run conversation through the Phase 6 Hybrid Agent LangGraph workflow."""
+    """Run stateful conversation through Phase 7 LangGraph hybrid agent workflow with checkpointing and HITL."""
 
+    thread_id = request.thread_id or f"thread_{uuid.uuid4().hex[:8]}"
     messages = [
         HumanMessage(content=item.content) if item.role == "user" else AIMessage(content=item.content)
         for item in request.messages
     ]
     attachments = [att.model_dump() for att in request.attachments]
 
+    input_state = {
+        "messages": messages,
+        "attachments": attachments,
+        "step_count": 0,
+        "max_steps": 5,
+        "thread_id": thread_id,
+    }
+    if request.approval:
+        input_state["approval_status"] = request.approval
+
+    config = {"configurable": {"thread_id": thread_id}}
+
     try:
-        result = await hybrid_chat_graph.ainvoke({
-            "messages": messages,
-            "attachments": attachments,
-            "step_count": 0,
-            "max_steps": 5,
-        })
+        result = await hybrid_chat_graph.ainvoke(input_state, config=config)
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except Exception as error:
-        raise HTTPException(status_code=502, detail="The assistant could not complete the request.") from error
+        raise HTTPException(status_code=502, detail=f"The assistant could not complete the request: {error}") from error
 
-    final_content = str(result["messages"][-1].content)
-    return ChatResponse(message={"role": "assistant", "content": final_content})
+    final_content = str(result["messages"][-1].content) if result.get("messages") else "No response generated."
+    activities = result.get("activities") or []
+    appr_required = bool(result.get("approval_required", False))
+    appr_id = result.get("approval_id")
+    appr_reason = result.get("approval_reason")
+
+    return ChatResponse(
+        message=ChatMessage(role="assistant", content=final_content),
+        thread_id=thread_id,
+        approval_required=appr_required,
+        approval_id=appr_id,
+        approval_reason=appr_reason,
+        activities=activities,
+    )
 
 
 @app.post("/api/documents/process", response_model=ProcessedDocument)

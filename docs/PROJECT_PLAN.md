@@ -27,18 +27,18 @@ retrieval, Gemini-grounded answers, and evidence/citations.
 
 ## Development phases
 
-| Phase | Scope |
-| --- | --- |
-| 1 | Text/NLP + Gemini foundation |
-| 2 | Intelligent PDF/document processing |
-| 3 | Embeddings + RAG + vector retrieval |
-| 4 | ML + multimodal capabilities |
-| 5 | Tools + Support/RAG/Data/ML specialist capabilities |
-| 6 | LangGraph orchestration + planning + reasoning |
-| 7 | Memory + checkpointing + reflection + human-in-the-loop |
-| 8 | Insight + action + reports + full frontend integration |
-| 9 | Google ADK / Vertex / Google ecosystem demonstrations |
-| 10 | Testing + evaluation + Docker + documentation + final demo |
+| Phase | Scope | Status |
+| --- | --- | --- |
+| 1 | Text/NLP + Gemini foundation | COMPLETE |
+| 2 | Intelligent PDF/document processing | COMPLETE |
+| 3 | Embeddings + RAG + vector retrieval | COMPLETE |
+| 4 | ML + multimodal capabilities | COMPLETE |
+| 5 | Tools + Support/RAG/Data/ML specialist capabilities | COMPLETE |
+| 6 | LangGraph orchestration + planning + reasoning | COMPLETE |
+| 7 | Memory + checkpointing + reflection + human-in-the-loop | COMPLETE |
+| 8 | Insight + action + reports + full frontend integration | NEXT |
+| 9 | Google ADK / Vertex / Google ecosystem demonstrations | PLANNED |
+| 10 | Testing + evaluation + Docker + documentation + final demo | PLANNED |
 
 ## Priorities
 

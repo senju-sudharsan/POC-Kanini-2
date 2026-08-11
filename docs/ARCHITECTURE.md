@@ -143,8 +143,8 @@ This system does not contain an enterprise data warehouse, raw/staging layers,
 ETL pipelines, SCD processing, star schemas, OLAP, dimensional models, or a
 warehouse-focused PostgreSQL design.
 
-Phase 7+ features (HITL approval nodes, safety guardrails, streaming SSE,
-persistent memory, and multi-turn autonomous planning) are not yet implemented.
+Phase 8+ features (real action workflows, long-term semantic memory, streaming SSE,
+advanced frontend integration) are not yet implemented.
 
 ## Implemented Agent Graph (Phase 6)
 
@@ -167,12 +167,43 @@ models/
   └── chat.py          → ImageAttachment(BaseModel), ChatRequest.attachments (optional)
 ```
 
-**Synthesis guarantees:**
-- Gemini available: full grounded response using all accumulated tool outputs as context.
-- Gemini 429/unavailable: deterministic fallback summary extracted from `tool_results`,
-  including preserved citation labels `[filename — Page X]`.
+## Implemented Memory, Reflection, and HITL (Phase 7)
 
-**Security boundaries (Phase 6):**
-- Attachments are passed as base64 strings; no filesystem paths accepted from callers.
-- `max_steps = 5` hard limit prevents unbounded specialist loops.
-- Each specialist wraps tool errors as structured payloads — no stack traces propagate.
+```text
+graphs/
+  ├── reflection.py    → reflection_node(state): evaluates tool quality, detects errors,
+  │                      triggers bounded retry (max_retries=1), enforces HITL approval
+  │                      boundary for controlled operations. Returns ReflectionDecision.
+  └── chat.py          → Phase 7: All specialists → reflection → {retry|synthesize}
+                         MemorySaver checkpointer compiled into graph.
+                         Thread-scoped state: config={"configurable": {"thread_id": id}}
+
+models/
+  ├── orchestration.py → ReflectionDecision(BaseModel), ApprovalRequest(BaseModel)
+  │                      Phase 7 state fields: retry_count, max_retries, reflection,
+  │                      approval_required, approval_id, approval_reason, approval_status
+  └── chat.py          → ChatRequest: +thread_id, +approval
+                         ChatResponse: +thread_id, +approval_required, +approval_id,
+                                        +approval_reason, +activities
+```
+
+**Phase 7 state-routing flow:**
+```
+START → supervisor → specialist → reflection
+                                     ├── needs_retry → supervisor (bounded, max_retries=1)
+                                     ├── approval_required → synthesize (HITL pause)
+                                     ├── data→ml cross-specialist → ml_agent
+                                     └── quality_ok → synthesize → END
+```
+
+**Memory boundaries:**
+- SHORT-TERM: `MemorySaver` checkpointer — in-process, thread-scoped, reset on restart.
+- LONG-TERM: not implemented — deferred to future phases.
+
+**HITL approval mechanism (demonstration):**
+- `reflection_node` detects controlled operation keywords and sets `approval_required=True`.
+- `synthesize_node` emits the approval banner message and returns to caller.
+- Caller resumes with `{"approval": "approved"|"rejected"}` in the next POST.
+- Only registered Phase 5 tools can execute. Shell, filesystem, and arbitrary Python
+  are never permitted regardless of approval status.
+

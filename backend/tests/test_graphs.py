@@ -27,6 +27,9 @@ from poc_kanini.rag.models import Citation, DocumentChunk, RetrievedChunk
 TINY_JPEG_BYTES = bytes([0xFF, 0xD8, 0xFF, 0xE0] + [0x00] * 50)
 TINY_JPEG_B64 = base64.b64encode(TINY_JPEG_BYTES).decode("utf-8")
 
+# Phase 7: MemorySaver requires a thread_id in every ainvoke/astream call.
+TEST_CONFIG = {"configurable": {"thread_id": "test-thread-graphs"}}
+
 
 # ---------------------------------------------------------------------------
 # 1-7. Supervisor Router Tests
@@ -64,7 +67,8 @@ def test_supervisor_data_routing_keyword() -> None:
 def test_supervisor_ml_routing_keyword() -> None:
     """Supervisor heuristic must route training queries to 'ml'."""
     router = SupervisorRouter()
-    state: AgentConversationState = {"messages": [HumanMessage(content="Train a classifier model on this dataset")]}
+    # Use small inlined data so it routes via keyword heuristic only (no Gemini call).
+    state: AgentConversationState = {"messages": [HumanMessage(content="Train a classifier model")]}
     decision = asyncio.run(router.route(state))
     assert decision.route == "ml"
 
@@ -133,7 +137,7 @@ def test_rag_tool_execution_node() -> None:
                 "messages": [HumanMessage(content="What is the leave policy?")],
                 "step_count": 0,
             }
-            return await hybrid_chat_graph.ainvoke(state)
+            return await hybrid_chat_graph.ainvoke(state, config=TEST_CONFIG)
 
     result = asyncio.run(_run())
     assert any(a["title"] == "Support Specialist" for a in result.get("activities", []))
@@ -150,7 +154,7 @@ def test_data_tool_execution_node() -> None:
             "messages": [HumanMessage(content=f"Profile this dataset: {sample_data}")],
             "step_count": 0,
         }
-        return await hybrid_chat_graph.ainvoke(state)
+        return await hybrid_chat_graph.ainvoke(state, config={"configurable": {"thread_id": "test-thread-data"}})
 
     result = asyncio.run(_run())
     assert any(a["title"] == "Data Specialist" for a in result.get("activities", []))
@@ -169,7 +173,7 @@ def test_ml_tool_execution_node() -> None:
             "messages": [HumanMessage(content=train_query)],
             "step_count": 0,
         }
-        return await hybrid_chat_graph.ainvoke(state)
+        return await hybrid_chat_graph.ainvoke(state, config={"configurable": {"thread_id": "test-thread-ml"}})
 
     result = asyncio.run(_run())
     assert any(a["title"] == "ML Specialist" for a in result.get("activities", []))
@@ -204,7 +208,7 @@ def test_multimodal_tool_execution_node() -> None:
                 "attachments": [{"filename": "test.jpg", "mime_type": "image/jpeg", "data": TINY_JPEG_B64}],
                 "step_count": 0,
             }
-            return await hybrid_chat_graph.ainvoke(state)
+            return await hybrid_chat_graph.ainvoke(state, config={"configurable": {"thread_id": "test-thread-mm"}})
 
     result = asyncio.run(_run())
     assert any(a["title"] == "Multimodal Specialist" for a in result.get("activities", []))
@@ -226,7 +230,7 @@ def test_cross_specialist_data_to_ml_workflow() -> None:
             "step_count": 0,
             "max_steps": 5,
         }
-        return await hybrid_chat_graph.ainvoke(state)
+        return await hybrid_chat_graph.ainvoke(state, config={"configurable": {"thread_id": "test-thread-cross"}})
 
     result = asyncio.run(_run())
 
@@ -248,7 +252,7 @@ def test_maximum_step_limit_enforced() -> None:
             "step_count": 5,  # already at limit
             "max_steps": 5,
         }
-        return await hybrid_chat_graph.ainvoke(state)
+        return await hybrid_chat_graph.ainvoke(state, config={"configurable": {"thread_id": "test-thread-limit"}})
 
     result = asyncio.run(_run())
     assert result["step_count"] >= 5
@@ -272,7 +276,7 @@ def test_tool_failure_recovery() -> None:
                 "messages": [HumanMessage(content="Search document policy")],
                 "step_count": 0,
             }
-            return await hybrid_chat_graph.ainvoke(state)
+            return await hybrid_chat_graph.ainvoke(state, config={"configurable": {"thread_id": "test-thread-fail"}})
 
     result = asyncio.run(_run())
     assert "messages" in result
@@ -288,7 +292,7 @@ def test_invalid_image_attachment_handling() -> None:
             "attachments": [{"filename": "bad.png", "mime_type": "image/png", "data": "not-valid-b64!"}],
             "step_count": 0,
         }
-        return await hybrid_chat_graph.ainvoke(state)
+        return await hybrid_chat_graph.ainvoke(state, config={"configurable": {"thread_id": "test-thread-badimg"}})
 
     result = asyncio.run(_run())
     assert "error" in result["tool_results"][0]["result"]
@@ -365,7 +369,7 @@ def test_citation_preservation_in_synthesis() -> None:
                 "messages": [HumanMessage(content="What is the remote work policy in employee_guide.pdf?")],
                 "step_count": 0,
             }
-            return await hybrid_chat_graph.ainvoke(state)
+            return await hybrid_chat_graph.ainvoke(state, config={"configurable": {"thread_id": "test-thread-cite"}})
 
     result = asyncio.run(_run())
     last_msg = result["messages"][-1].content
