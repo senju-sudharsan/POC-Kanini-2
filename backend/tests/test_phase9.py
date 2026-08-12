@@ -755,3 +755,173 @@ def test_api_chat_preserves_document_ids_in_checkpoint() -> None:
         assert supervisor_act_3 is not None
         assert "general_agent" in supervisor_act_3["data"] or "general" in supervisor_act_3["data"]
 
+
+# ---------------------------------------------------------------------------
+# RAG Synthesis Quality Tests
+# ---------------------------------------------------------------------------
+
+def test_synthesis_simple_rag_question_gives_direct_answer_no_report():
+    """Simple factual RAG question should produce a direct answer, not an executive report."""
+    from poc_kanini.graphs.specialists import synthesize_node
+    from langchain_core.messages import HumanMessage
+
+    state = {
+        "messages": [HumanMessage(content="What does this guy specialize at?")],
+        "tool_results": [
+            {
+                "tool": "search_document_evidence",
+                "result": {
+                    "evidence": [
+                        {"text": "Sudharsan specializes in Data Science and AI/ML.", "document_id": "d1",
+                         "filename": "resume.pdf", "page_number": 1, "chunk_id": "c1", "score": 0.9, "distance": 0.1},
+                    ],
+                    "citations": [
+                        {"label": "resume.pdf — Page 1", "filename": "resume.pdf", "page_number": 1},
+                    ],
+                    "retrieved_count": 1,
+                    "summary": "Retrieved 1 evidence snippet(s) from indexed documents.",
+                },
+            }
+        ],
+        "activities": [],
+        "warnings": [],
+        "reports": [],
+        "actions": [],
+        "step_count": 1,
+    }
+
+    result = asyncio.run(synthesize_node(state))
+
+    # Must produce an answer
+    ai_msg = result["messages"][-1]
+    assert ai_msg.content, "Synthesis should produce non-empty answer"
+
+    # Must NOT generate a structured report for simple questions
+    assert len(result.get("reports", [])) == 0, "Simple questions should not generate structured reports"
+
+    # The answer must not contain generic enterprise report headers
+    content_lower = ai_msg.content.lower()
+    assert "enterprise ai intelligence" not in content_lower
+    assert "executive summary" not in content_lower
+
+    # Must not contain generic recommendation
+    assert "review cited document pages for full contractual or policy context" not in content_lower
+
+
+def test_synthesis_analytical_request_generates_report():
+    """Analytical queries with keywords like 'summarize' should still generate reports."""
+    from poc_kanini.graphs.specialists import synthesize_node
+    from langchain_core.messages import HumanMessage
+
+    state = {
+        "messages": [HumanMessage(content="Summarize this resume")],
+        "tool_results": [
+            {
+                "tool": "search_document_evidence",
+                "result": {
+                    "evidence": [
+                        {"text": "Professional summary for Sudharsan.", "document_id": "d1",
+                         "filename": "resume.pdf", "page_number": 1, "chunk_id": "c1", "score": 0.9, "distance": 0.1},
+                    ],
+                    "citations": [
+                        {"label": "resume.pdf — Page 1", "filename": "resume.pdf", "page_number": 1},
+                    ],
+                    "retrieved_count": 1,
+                    "summary": "Retrieved 1 evidence snippet(s).",
+                },
+            }
+        ],
+        "activities": [],
+        "warnings": [],
+        "reports": [],
+        "actions": [],
+        "step_count": 1,
+    }
+
+    result = asyncio.run(synthesize_node(state))
+    assert len(result.get("reports", [])) >= 1, "Analytical requests should generate a structured report"
+
+
+def test_synthesis_deduplicates_citations():
+    """Duplicate (filename, page_number) citations should be collapsed to one."""
+    from poc_kanini.graphs.specialists import synthesize_node
+    from langchain_core.messages import HumanMessage
+
+    dup_citation = {"label": "resume.pdf — Page 1", "filename": "resume.pdf", "page_number": 1}
+    state = {
+        "messages": [HumanMessage(content="What skills does this person have?")],
+        "tool_results": [
+            {
+                "tool": "search_document_evidence",
+                "result": {
+                    "evidence": [
+                        {"text": "Python, ML.", "document_id": "d1", "filename": "resume.pdf",
+                         "page_number": 1, "chunk_id": "c1", "score": 0.9, "distance": 0.1},
+                        {"text": "Deep learning.", "document_id": "d1", "filename": "resume.pdf",
+                         "page_number": 1, "chunk_id": "c2", "score": 0.8, "distance": 0.2},
+                        {"text": "Data analysis.", "document_id": "d1", "filename": "resume.pdf",
+                         "page_number": 1, "chunk_id": "c3", "score": 0.7, "distance": 0.3},
+                        {"text": "TensorFlow.", "document_id": "d1", "filename": "resume.pdf",
+                         "page_number": 1, "chunk_id": "c4", "score": 0.6, "distance": 0.4},
+                    ],
+                    "citations": [dup_citation, dup_citation, dup_citation, dup_citation],
+                    "retrieved_count": 4,
+                    "summary": "Retrieved 4 snippets.",
+                },
+            }
+        ],
+        "activities": [],
+        "warnings": [],
+        "reports": [],
+        "actions": [],
+        "step_count": 1,
+    }
+
+    result = asyncio.run(synthesize_node(state))
+
+    # Citations should be deduplicated to a single entry
+    citations = result.get("citations", [])
+    assert len(citations) == 1, f"Expected 1 deduplicated citation, got {len(citations)}: {citations}"
+    assert citations[0]["filename"] == "resume.pdf"
+    assert citations[0]["page_number"] == 1
+
+
+def test_synthesis_no_evidence_gives_safe_response():
+    """When RAG retrieves zero evidence, synthesis should say so honestly."""
+    from poc_kanini.graphs.specialists import synthesize_node
+    from langchain_core.messages import HumanMessage
+
+    state = {
+        "messages": [HumanMessage(content="What is the refund policy?")],
+        "tool_results": [
+            {
+                "tool": "search_document_evidence",
+                "result": {
+                    "evidence": [],
+                    "citations": [],
+                    "retrieved_count": 0,
+                    "summary": "No matching evidence found.",
+                },
+            }
+        ],
+        "activities": [],
+        "warnings": [],
+        "reports": [],
+        "actions": [],
+        "step_count": 1,
+    }
+
+    result = asyncio.run(synthesize_node(state))
+    ai_msg = result["messages"][-1]
+    content_lower = ai_msg.content.lower()
+
+    # Should communicate that no evidence was found — not hallucinate an answer
+    assert any(phrase in content_lower for phrase in [
+        "does not contain enough information",
+        "no matching evidence",
+        "no relevant evidence",
+        "could not find",
+        "unable to find",
+        "no information",
+    ]), f"Expected safe 'no evidence' response, got: {ai_msg.content}"
+

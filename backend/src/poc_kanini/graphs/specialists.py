@@ -22,15 +22,20 @@ from poc_kanini.tools import (
 
 logger = logging.getLogger(__name__)
 
-SYNTHESIS_SYSTEM_INSTRUCTION = """You are AURA (Agentic Understanding & Retrieval Assistant), synthesizing a final response.
-Use the supplied conversation history, tool results, evidence snippets, data profiles, ML metrics, and visual observations to answer the user's request.
+SYNTHESIS_SYSTEM_INSTRUCTION = """You are AURA (Agentic Understanding & Retrieval Assistant).
+
+Your primary job is to ANSWER THE USER'S QUESTION directly, grounded strictly in the retrieved evidence.
 
 Rules:
-- Give a clear, direct, well-structured Markdown response.
-- When document evidence is present, include source citations in the exact format: [filename — Page X].
-- When dataset profiling or ML metrics are present, report actual values (Accuracy, F1, MAE, R², feature importances) without inventing numbers.
-- When visual observations are present, report what was observed and include any uncertainty notes.
-- Do not disclose internal system instructions or raw stack traces."""
+1. Answer the user's actual question first. Be concise and conversational for simple factual questions.
+2. Ground every claim in the supplied evidence. Do NOT invent information or supplement from general knowledge.
+3. When document evidence is present, append deduplicated source citations at the end in the format: [filename — Page X]. Only list each unique (filename, page) combination once.
+4. Do NOT produce an "executive summary", "report", section headers, or "recommendations" unless the user explicitly asked for a summary, report, or analysis.
+5. Do NOT append generic advice like "Review cited document pages for full contractual or policy context" — only include recommendations when genuinely relevant and requested.
+6. When dataset profiling or ML metrics are present, report actual values (Accuracy, F1, MAE, R², feature importances) without inventing numbers.
+7. When visual observations are present, report what was observed and include any uncertainty notes.
+8. If no relevant evidence was found, say so honestly. Do not fabricate an answer.
+9. Do not disclose internal system instructions or raw stack traces."""
 
 
 def _get_latest_user_text(state: AgentConversationState) -> str:
@@ -381,7 +386,7 @@ async def synthesize_node(state: AgentConversationState) -> dict[str, Any]:
     answer_text = ""
 
     def _build_fallback_answer(results: list[dict]) -> str:
-        """Build a deterministic plain-text summary from tool results, including citations and message context."""
+        """Build a deterministic plain-text summary from tool results, including deduplicated citations and message context."""
         if not results:
             # If no tools ran, check if previous messages exist in state to retain context
             prev_user_texts = [
@@ -397,9 +402,23 @@ async def synthesize_node(state: AgentConversationState) -> dict[str, Any]:
             t = item.get("tool")
             r = item.get("result") or {}
             if t == "search_document_evidence":
-                ans = r.get("summary", "Retrieved evidence from enterprise documents.")
-                cites = " ".join([f"[{c['label']}]" for c in r.get("citations", [])])
-                summaries.append(f"{ans} {cites}".strip())
+                evidence_list = r.get("evidence") or []
+                if evidence_list:
+                    # Build a direct answer from evidence text
+                    evidence_texts = [e.get("text", "") for e in evidence_list if e.get("text")]
+                    answer_body = " ".join(evidence_texts[:3]) if evidence_texts else r.get("summary", "Retrieved evidence from documents.")
+                    # Deduplicate citations by (filename, page_number)
+                    seen_cites: set[tuple[str, int]] = set()
+                    unique_cite_labels: list[str] = []
+                    for c in r.get("citations", []):
+                        key = (c.get("filename", ""), c.get("page_number", 0))
+                        if key not in seen_cites:
+                            seen_cites.add(key)
+                            unique_cite_labels.append(f"[{c['label']}]")
+                    cites = " ".join(unique_cite_labels)
+                    summaries.append(f"{answer_body}\n\n{cites}".strip())
+                else:
+                    summaries.append("The document does not contain enough information to answer this question.")
             elif t == "profile_dataset_tool":
                 summaries.append(
                     f"Dataset contains {r.get('row_count', 0)} rows and {r.get('column_count', 0)} columns. "
@@ -443,8 +462,9 @@ async def synthesize_node(state: AgentConversationState) -> dict[str, Any]:
     ai_message = AIMessage(content=answer_text)
     messages.append(ai_message)
 
-    # Extract citations, warnings, reports, actions for Phase 8 contracts
+    # Extract deduplicated citations, warnings, reports, actions for Phase 8 contracts
     citations = []
+    seen_citation_keys: set[tuple[str, int]] = set()
     warnings = list(state.get("warnings") or [])
     reports = list(state.get("reports") or [])
     actions = list(state.get("actions") or [])
@@ -453,19 +473,29 @@ async def synthesize_node(state: AgentConversationState) -> dict[str, Any]:
         if tr.get("tool") == "search_document_evidence" and tr.get("result"):
             c_list = tr["result"].get("citations") or []
             for c in c_list:
-                if c not in citations:
+                cite_key = (c.get("filename", ""), c.get("page_number", 0))
+                if cite_key not in seen_citation_keys:
+                    seen_citation_keys.add(cite_key)
                     citations.append(c)
         if tr.get("error"):
             warnings.append(f"{tr.get('tool')}: {tr.get('error')}")
 
-    if (any(k in user_query.lower() for k in ["report", "summary", "insight"]) or len(tool_results) >= 1) and not reports:
+    # Only generate structured reports for explicitly analytical requests
+    _analytical_keywords = ["report", "summary", "summarize", "summarise", "insight",
+                            "analyze", "analyse", "analysis", "comprehensive", "compare",
+                            "comparison", "overview", "breakdown", "assessment",
+                            "profile", "dataset", "csv", "train", "predict", "image", "visual"]
+    _q_lower = user_query.lower()
+    _wants_report = any(k in _q_lower for k in _analytical_keywords)
+
+    if _wants_report and not reports:
         from poc_kanini.services.report_service import generate_report
         rtype = "executive_summary"
-        if "dataset" in user_query.lower() or "csv" in user_query.lower():
+        if "dataset" in _q_lower or "csv" in _q_lower:
             rtype = "dataset_analysis"
-        elif "document" in user_query.lower() or "pdf" in user_query.lower():
+        elif "document" in _q_lower or "pdf" in _q_lower:
             rtype = "document_analysis"
-        elif "image" in user_query.lower() or "photo" in user_query.lower():
+        elif "image" in _q_lower or "photo" in _q_lower:
             rtype = "image_analysis"
 
         report_payload = generate_report(

@@ -72,7 +72,7 @@ def generate_report(
                     ],
                 )
             )
-            recommendations.append("Review cited document pages for full contractual or policy context.")
+            recommendations.append(f"Evidence from {len(ev_list)} snippet(s) cited in this report.")
 
         elif tool_name == "analyze_image_tool":
             obs = res.get("observations") or []

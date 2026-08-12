@@ -162,13 +162,32 @@ def test_multimodal_attachment_workflow() -> None:
 def test_dataset_profiling_workflow() -> None:
     """Chat input requesting dataset profiling must profile dataset and return tool results and report payload."""
     sample_csv = "age,salary,churn\n25,50000,0\n40,90000,1\n30,65000,0"
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/chat",
-            json={
-                "messages": [{"role": "user", "content": f"Profile this tabular dataset CSV: {sample_csv}"}],
-            },
-        )
+
+    # Mock the Gemini LLM synthesis and supervisor router boundaries so the test is deterministic.
+    mock_response = MagicMock()
+    mock_response.text = "Dataset profiled successfully."
+
+    mock_supervisor_response = MagicMock()
+    mock_supervisor_response.text = '{"route": "data", "reason": "Requesting dataset profiling", "confidence": 0.9}'
+
+    with patch("poc_kanini.graphs.specialists.genai.Client") as mock_spec_client, \
+         patch("poc_kanini.graphs.supervisor.genai.Client") as mock_sup_client:
+
+        mock_aio_spec = MagicMock()
+        mock_aio_spec.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_spec_client.return_value.aio = mock_aio_spec
+
+        mock_aio_sup = MagicMock()
+        mock_aio_sup.models.generate_content = AsyncMock(return_value=mock_supervisor_response)
+        mock_sup_client.return_value.aio = mock_aio_sup
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/chat",
+                json={
+                    "messages": [{"role": "user", "content": f"Profile this tabular dataset CSV: {sample_csv}"}],
+                },
+            )
     assert response.status_code == 200
     data = response.json()
     assert any(t["tool"] == "profile_dataset_tool" for t in data["tool_results"])
