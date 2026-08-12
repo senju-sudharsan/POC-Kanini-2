@@ -10,6 +10,7 @@ export function ChatComposer({
   onFocusChange,
   onTypingChange,
   onIndexed,
+  onUnlinkDocument,
   documentName,
   auraState,
 }: {
@@ -19,6 +20,7 @@ export function ChatComposer({
   onFocusChange?: (focused: boolean) => void;
   onTypingChange?: (typing: boolean) => void;
   onIndexed?: (documentId: string, filename?: string) => void;
+  onUnlinkDocument?: () => void;
   documentName?: string | null;
   auraState?: string;
 }) {
@@ -138,9 +140,19 @@ export function ChatComposer({
         {(attachments.length > 0 || documentName || isUploadingDoc) && (
           <div className="px-4 pt-2.5 flex flex-wrap gap-2 items-center">
             {documentName && (
-              <div className="flex items-center gap-1.5 bg-neutral-900 border border-blue-900/50 text-blue-300 text-xs px-2.5 py-1 rounded-full">
+              <div className="flex items-center gap-1.5 bg-neutral-900 border border-blue-900/50 text-blue-300 text-xs pl-2.5 pr-1.5 py-1 rounded-full">
                 <FileText className="w-3.5 h-3.5" />
                 <span className="truncate max-w-[140px]">{documentName}</span>
+                {onUnlinkDocument && (
+                  <button
+                    type="button"
+                    onClick={onUnlinkDocument}
+                    className="hover:text-red-400 ml-0.5"
+                    title="Remove document association"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
               </div>
             )}
             {isUploadingDoc && (

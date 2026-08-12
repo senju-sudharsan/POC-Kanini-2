@@ -1,16 +1,18 @@
 import { useState } from "react";
 import { AuraOrb, type AuraState, STATE_LABELS } from "@/components/AuraOrb";
-import { FileText, Sparkles } from "lucide-react";
+import { FileText, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function WelcomeScreen({
   onIndexed,
   documentName,
+  onUnlinkDocument,
   auraState = "idle",
   onPromptSelect,
 }: {
   onIndexed?: (documentId: string, filename?: string) => void;
   documentName?: string | null;
+  onUnlinkDocument?: () => void;
   auraState?: AuraState;
   onPromptSelect?: (prompt: string) => void;
 }) {
@@ -76,9 +78,19 @@ export function WelcomeScreen({
           onChange={handleDocUpload}
         />
         {documentName ? (
-          <div className="inline-flex items-center gap-2 bg-[#111318] border border-blue-900/50 text-blue-300 text-xs px-3.5 py-1.5 rounded-full">
+          <div className="inline-flex items-center gap-2 bg-[#111318] border border-blue-900/50 text-blue-300 text-xs pl-3.5 pr-2 py-1.5 rounded-full">
             <FileText className="w-4 h-4 text-blue-400" />
             <span>Active Document: <strong>{documentName}</strong></span>
+            {onUnlinkDocument && (
+              <button
+                type="button"
+                onClick={onUnlinkDocument}
+                className="hover:text-red-400 p-0.5 rounded-full transition ml-1"
+                title="Remove document association"
+              >
+                <X className="w-3.5 h-3.5 text-neutral-400 hover:text-red-400" />
+              </button>
+            )}
           </div>
         ) : (
           <label htmlFor="welcome-pdf-upload">

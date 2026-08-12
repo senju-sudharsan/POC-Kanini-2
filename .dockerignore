@@ -1,42 +1,142 @@
-# Docker ignore file for AURA / POC-Kanini-2
-# Prevents secrets, dev artifacts, and runtime data from entering the image.
+# ============================================================
+# AURA / POC-Kanini-2 — Docker Build Context
+# ============================================================
 
-# Secrets — never bake into image
+# ============================================================
+# Secrets — NEVER send into Docker build context
+# ============================================================
+
 .env
+.env.*
+!.env.example
 *.pem
 *.key
+*.secret
 
-# Python dev artifacts
-.venv/
-__pycache__/
-*.pyc
-*.pyo
-*.egg-info/
-.pytest_cache/
-.pytest-tmp/
-dist/
-build/
-*.egg
+# ============================================================
+# Git / Version Control
+# ============================================================
 
-# Node dev artifacts
-frontend/node_modules/
-frontend/dist/
-
-# Runtime / persisted data — mount as Docker volume instead
-data/chroma/
-
-# Version control
 .git/
 .gitignore
+.gitattributes
 
-# IDE / editor
+# ============================================================
+# Python
+# ============================================================
+
+.venv/
+venv/
+env/
+ENV/
+backend/.venv/
+
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+
+# ============================================================
+# Python Test / Coverage Artifacts
+# ============================================================
+
+.pytest_cache/
+.pytest-tmp/
+**/.pytest_cache/
+**/.pytest-tmp/
+
+.coverage
+.coverage.*
+htmlcov/
+
+# ============================================================
+# Python Tool / Build Caches
+# ============================================================
+
+.cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+
+# ============================================================
+# Node / Frontend Development Artifacts
+# ============================================================
+
+node_modules/
+**/node_modules/
+
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+dist/
+build/
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ============================================================
+# Runtime / Generated Data
+# ============================================================
+
+# Chroma is persisted through Docker volume.
+data/chroma/
+data/vector_store/
+data/embeddings/
+
+# Other local runtime data
+logs/
+*.log
+tmp/
+temp/
+
+# ============================================================
+# IDE / Editor
+# ============================================================
+
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# Reference repo
+# ============================================================
+# OS Files
+# ============================================================
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============================================================
+# Reference Repository
+# ============================================================
+
 gemini-base/
 
-# Documentation artefacts
+# ============================================================
+# Documentation Build / Cache Artifacts
+# ============================================================
+
 docs/__pycache__/
+docs/.cache/
+
+# ============================================================
+# Local Prototype / Design Artifacts
+# ============================================================
+
+# The original standalone UI prototype is not part of production AURA.
+aura/
+
+# ============================================================
+# Temporary / Backup Files
+# ============================================================
+
+*.tmp
+*.temp
+*.bak
+*~

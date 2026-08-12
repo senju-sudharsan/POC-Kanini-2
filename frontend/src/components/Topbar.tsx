@@ -1,12 +1,14 @@
-import { FileText, RotateCcw } from "lucide-react";
+import { FileText, RotateCcw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function Topbar({
   documentName,
   onResetChat,
+  onUnlinkDocument,
 }: {
   documentName?: string | null;
   onResetChat?: () => void;
+  onUnlinkDocument?: () => void;
 }) {
   return (
     <header className="topbar">
@@ -22,9 +24,19 @@ export function Topbar({
 
       <div className="flex items-center gap-3">
         {documentName && (
-          <div className="flex items-center gap-1.5 text-xs text-blue-400 bg-blue-950/40 px-2.5 py-1 rounded-full border border-blue-800/40">
+          <div className="flex items-center gap-1.5 text-xs text-blue-400 bg-blue-950/40 pl-2.5 pr-1.5 py-1 rounded-full border border-blue-800/40">
             <FileText className="w-3.5 h-3.5" />
             <span className="font-medium truncate max-w-[160px]">{documentName}</span>
+            {onUnlinkDocument && (
+              <button
+                type="button"
+                onClick={onUnlinkDocument}
+                className="hover:text-red-400 p-0.5 rounded-full transition"
+                title="Remove document association"
+              >
+                <X className="w-3.5 h-3.5 text-neutral-400 hover:text-red-400" />
+              </button>
+            )}
           </div>
         )}
         <div className="header-actions">

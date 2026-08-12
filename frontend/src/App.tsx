@@ -132,6 +132,11 @@ export default function App() {
     if (filename) setDocumentName(filename);
   };
 
+  const handleUnlinkDocument = useCallback(() => {
+    setDocumentId(null);
+    setDocumentName(null);
+  }, []);
+
   const handleResetChat = () => {
     setMessages([]);
     setLiveActivities([]);
@@ -145,7 +150,11 @@ export default function App() {
 
   return (
     <div className="aura-app">
-      <Topbar documentName={documentName} onResetChat={handleResetChat} />
+      <Topbar
+        documentName={documentName}
+        onResetChat={handleResetChat}
+        onUnlinkDocument={handleUnlinkDocument}
+      />
 
       <main className="conversation-container">
         {error && (
@@ -170,6 +179,7 @@ export default function App() {
           <WelcomeScreen
             onIndexed={handleDocumentIndexed}
             documentName={documentName}
+            onUnlinkDocument={handleUnlinkDocument}
             auraState={auraState}
             onPromptSelect={(prompt) => submit(prompt)}
           />
@@ -191,6 +201,7 @@ export default function App() {
         onFocusChange={setIsFocused}
         onTypingChange={setIsTyping}
         onIndexed={handleDocumentIndexed}
+        onUnlinkDocument={handleUnlinkDocument}
         documentName={documentName}
         auraState={auraState}
       />

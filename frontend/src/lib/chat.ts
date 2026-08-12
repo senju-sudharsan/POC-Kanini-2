@@ -52,8 +52,8 @@ export async function sendChat(
     body: JSON.stringify({
       messages: messages.map(({ role, content }) => ({ role, content })),
       thread_id: threadId || undefined,
-      document_id: documentId || undefined,
-      document_ids: documentId ? [documentId] : undefined,
+      document_id: documentId || null,
+      document_ids: documentId ? [documentId] : [],
       attachments: attachments && attachments.length ? attachments : undefined,
       approval: approval || undefined,
     }),

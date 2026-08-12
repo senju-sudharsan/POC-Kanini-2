@@ -673,3 +673,85 @@ def test_reliability_rag_empty_retrieval_no_fabrication() -> None:
     service = RetrievalService(EmptyEmbeddings(), EmptyStore())
     results = asyncio.run(service.retrieve("What is the leave policy?", top_k=5))
     assert results == []
+
+
+def test_reliability_supervisor_routes_to_rag_when_document_attached() -> None:
+    """Supervisor heuristic should route generic queries to RAG if a document is attached."""
+    from poc_kanini.graphs.supervisor import SupervisorRouter
+    from poc_kanini.core.config import Settings
+
+    router = SupervisorRouter(Settings(gemini_api_key=None))
+
+    # Greeting should still go to general
+    dec_greet = router._heuristic_route("Hello there", has_documents=True)
+    assert dec_greet.route == "general"
+
+    # Specific dataset query goes to data
+    dec_data = router._heuristic_route("Profile this dataset", has_documents=True)
+    assert dec_data.route == "data"
+
+    # Generic question about target topic goes to RAG when document is attached
+    dec_rag = router._heuristic_route("What does this guy specialize at?", has_documents=True)
+    assert dec_rag.route == "rag"
+
+
+def test_api_chat_preserves_document_ids_in_checkpoint() -> None:
+    """API chat endpoint must preserve document_ids in checkpoints if omitted from subsequent payloads, and clear them if explicitly unlinked."""
+    with TestClient(app) as client:
+        thread_id = f"thread_{uuid.uuid4().hex[:8]}"
+
+        # First call: explicitly associate document
+        resp1 = client.post(
+            "/api/chat",
+            json={
+                "messages": [{"role": "user", "content": "What is the policy?"}],
+                "thread_id": thread_id,
+                "document_id": "doc_123",
+                "document_ids": ["doc_123"],
+            },
+        )
+        assert resp1.status_code == 200
+
+        # Second call: omit document fields entirely to simulate continuing thread using checkpointed documents
+        resp2 = client.post(
+            "/api/chat",
+            json={
+                "messages": [
+                    {"role": "user", "content": "What is the policy?"},
+                    {"role": "assistant", "content": "The policy states X."},
+                    {"role": "user", "content": "Tell me more about it."},
+                ],
+                "thread_id": thread_id,
+            },
+        )
+        assert resp2.status_code == 200
+        # Since document_ids was not passed, the checkpointed list is preserved, and RAG routes
+        # Check activities trace from supervisor node to verify it routed to 'support_agent' (RAG)
+        acts2 = resp2.json().get("activities", [])
+        supervisor_act = next((a for a in acts2 if a["title"] == "Supervisor Routing"), None)
+        assert supervisor_act is not None
+        assert "support_agent" in supervisor_act["data"] or "rag" in supervisor_act["data"]
+
+        # Third call: explicitly clear the document association (unlink) by passing empty list/null
+        resp3 = client.post(
+            "/api/chat",
+            json={
+                "messages": [
+                    {"role": "user", "content": "What is the policy?"},
+                    {"role": "assistant", "content": "The policy states X."},
+                    {"role": "user", "content": "Tell me more about it."},
+                    {"role": "assistant", "content": "It says Y."},
+                    {"role": "user", "content": "Disconnect doc."},
+                ],
+                "thread_id": thread_id,
+                "document_id": None,
+                "document_ids": [],
+            },
+        )
+        assert resp3.status_code == 200
+        # Check activities trace from supervisor node to verify it routed to general conversation (not RAG)
+        acts3 = resp3.json().get("activities", [])
+        supervisor_act_3 = next((a for a in reversed(acts3) if a["title"] == "Supervisor Routing"), None)
+        assert supervisor_act_3 is not None
+        assert "general_agent" in supervisor_act_3["data"] or "general" in supervisor_act_3["data"]
+

@@ -137,18 +137,19 @@ async def chat(request: ChatRequest) -> ChatResponse:
     ]
     attachments = [att.model_dump() for att in request.attachments]
 
-    doc_ids = list(request.document_ids)
-    if request.document_id and request.document_id not in doc_ids:
-        doc_ids.insert(0, request.document_id)
-
     input_state: dict[str, Any] = {
         "messages": messages,
         "attachments": attachments,
-        "document_ids": doc_ids,
         "step_count": 0,
         "max_steps": 5,
         "thread_id": thread_id,
     }
+
+    if "document_id" in request.model_fields_set or "document_ids" in request.model_fields_set:
+        doc_ids = list(request.document_ids)
+        if request.document_id and request.document_id not in doc_ids:
+            doc_ids.insert(0, request.document_id)
+        input_state["document_ids"] = doc_ids
     if request.approval:
         input_state["approval_status"] = request.approval
 
