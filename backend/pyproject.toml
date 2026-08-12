@@ -1,7 +1,7 @@
 [project]
 name = "poc-kanini-2-backend"
 version = "0.1.0"
-description = "FastAPI foundation for the POC Kanini Enterprise AI Assistant"
+description = "FastAPI backend for AURA — Agentic Understanding & Retrieval Assistant (POC-Kanini-2)"
 requires-python = ">=3.11,<4.0"
 dependencies = [
   "fastapi>=0.115,<1.0",

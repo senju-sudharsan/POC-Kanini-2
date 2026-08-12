@@ -1,0 +1,37 @@
+# AURA — Docker Compose (single-service, development/POC)
+# Usage:
+#   docker compose up --build
+#
+# Supply the Gemini API key via a .env file at the repo root (NOT committed):
+#   GEMINI_API_KEY=your-key-here
+#
+# The Chroma vector store is persisted to a named volume so indexed documents
+# survive container restarts.
+
+services:
+  aura:
+    build: .
+    image: aura-poc:latest
+    container_name: aura
+    ports:
+      - "8000:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - ENVIRONMENT=production
+      - RAG_VECTOR_STORE_DIR=data/chroma
+      # In production, set this to your real domain(s):
+      # - CORS_ORIGINS=["https://yourdomain.com"]
+    volumes:
+      - aura_chroma:/app/data/chroma
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  aura_chroma:
+    driver: local

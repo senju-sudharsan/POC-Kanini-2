@@ -13,7 +13,7 @@ from poc_kanini.models.orchestration import ActivityEvent, AgentConversationStat
 
 logger = logging.getLogger(__name__)
 
-SUPERVISOR_SYSTEM_INSTRUCTION = """You are the Supervisor Router for the Enterprise AI Assistant.
+SUPERVISOR_SYSTEM_INSTRUCTION = """You are the Supervisor Router for AURA (Agentic Understanding & Retrieval Assistant).
 Analyze the user request and any available image attachments, then select the single best specialist route:
 
 - 'multimodal': The request includes an image attachment, or explicitly asks for visual analysis of an image.

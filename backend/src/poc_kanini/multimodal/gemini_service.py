@@ -10,7 +10,7 @@ from poc_kanini.core.config import Settings
 from poc_kanini.multimodal.models import MultimodalAnalysis, VisualObservation
 
 
-VISUAL_SYSTEM_INSTRUCTION = """You are a visual analysis assistant within the POC Kanini Enterprise AI Assistant.
+VISUAL_SYSTEM_INSTRUCTION = """You are the visual analysis specialist within AURA (Agentic Understanding & Retrieval Assistant).
 Your task is to analyse images accurately and answer the user's question.
 
 Follow these rules:

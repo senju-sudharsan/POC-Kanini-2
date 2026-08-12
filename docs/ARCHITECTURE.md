@@ -1,4 +1,4 @@
-# Architecture - Enterprise AI Assistant / Decision Agent
+# AURA — Architecture (POC-Kanini-2 Engineering Reference)
 
 ## Target architecture
 
@@ -143,8 +143,7 @@ This system does not contain an enterprise data warehouse, raw/staging layers,
 ETL pipelines, SCD processing, star schemas, OLAP, dimensional models, or a
 warehouse-focused PostgreSQL design.
 
-Phase 8+ features (real action workflows, long-term semantic memory, streaming SSE,
-advanced frontend integration) are not yet implemented.
+Phase 9+ features (cloud deployment, ADK evaluation, production auth/RBAC, streaming SSE) are not yet implemented.
 
 ## Implemented Agent Graph (Phase 6)
 
@@ -187,23 +186,34 @@ models/
                                         +approval_reason, +activities
 ```
 
-**Phase 7 state-routing flow:**
+## Implemented Unified Assistant, Reports, & Action Abstraction (Phase 8)
+
+```text
+models/
+  ├── actions.py       → ActionRequest(BaseModel), ActionResult(BaseModel)
+  │                      ReportPayload(BaseModel), ReportSection(BaseModel)
+  ├── chat.py          → ChatRequest: +document_id, +document_ids
+  │                      ChatResponse: +citations, +tool_results, +warnings, +reports, +actions
+  └── orchestration.py → AgentConversationState: +document_ids, +citations, +reports, +actions, +warnings
+
+services/
+  └── report_service.py→ generate_report(report_type, tool_results, user_query, citations)
+                         execute_action(ActionRequest) → ActionResult
+
+components/ (Frontend)
+  ├── ToolResultCard.tsx → Evidence citations, ML evaluation metrics grid, visual observations, warning banners
+  ├── ReportCard.tsx     → Structured report payloads with summary, sections, bullet points, and recommendations
+  ├── InputForm.tsx      → Image picker (JPEG/PNG/WEBP), Base64 converter, and thumbnail previews
+  └── App.tsx            → Unified assistant interface routing text, documents, images, datasets, and approvals through /api/chat
+```
+
+**Phase 8 state-routing flow:**
 ```
 START → supervisor → specialist → reflection
                                      ├── needs_retry → supervisor (bounded, max_retries=1)
                                      ├── approval_required → synthesize (HITL pause)
                                      ├── data→ml cross-specialist → ml_agent
-                                     └── quality_ok → synthesize → END
+                                     └── quality_ok → synthesize (with citations, reports, metrics, actions) → END
 ```
 
-**Memory boundaries:**
-- SHORT-TERM: `MemorySaver` checkpointer — in-process, thread-scoped, reset on restart.
-- LONG-TERM: not implemented — deferred to future phases.
-
-**HITL approval mechanism (demonstration):**
-- `reflection_node` detects controlled operation keywords and sets `approval_required=True`.
-- `synthesize_node` emits the approval banner message and returns to caller.
-- Caller resumes with `{"approval": "approved"|"rejected"}` in the next POST.
-- Only registered Phase 5 tools can execute. Shell, filesystem, and arbitrary Python
-  are never permitted regardless of approval status.
 

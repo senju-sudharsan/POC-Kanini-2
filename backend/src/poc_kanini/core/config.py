@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Runtime settings, read from environment variables or an optional .env file."""
 
-    app_name: str = "POC Kanini Enterprise AI Assistant"
+    app_name: str = "AURA — Agentic Understanding & Retrieval Assistant"
     environment: str = "development"
     gemini_model: str = "gemini-2.5-flash"
     gemini_api_key: str | None = None
@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     rag_top_k: int = 5
     rag_enable_reranking: bool = False
     frontend_build_dir: str = "../frontend/dist"
+
+    # Comma-separated origins for CORS. Override in production via env var.
+    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:4173", "http://localhost:8000"]
+    # Maximum allowed upload size in bytes (applies to documents AND images).
+    max_upload_bytes: int = 20 * 1024 * 1024  # 20 MiB
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

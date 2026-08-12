@@ -22,7 +22,7 @@ from poc_kanini.tools import (
 
 logger = logging.getLogger(__name__)
 
-SYNTHESIS_SYSTEM_INSTRUCTION = """You are the POC Kanini Enterprise AI Assistant synthesizing a final response.
+SYNTHESIS_SYSTEM_INSTRUCTION = """You are AURA (Agentic Understanding & Retrieval Assistant), synthesizing a final response.
 Use the supplied conversation history, tool results, evidence snippets, data profiles, ML metrics, and visual observations to answer the user's request.
 
 Rules:
@@ -50,16 +50,23 @@ async def support_agent_node(state: AgentConversationState) -> dict[str, Any]:
     activities = list(state.get("activities") or [])
     tool_results = list(state.get("tool_results") or [])
 
+    doc_id = None
+    doc_ids = state.get("document_ids") or []
+    if doc_ids:
+        doc_id = doc_ids[0]
+    elif state.get("document_id"):
+        doc_id = state.get("document_id")
+
     activities.append(
         ActivityEvent(
             title="Support Specialist",
-            data="Searching indexed enterprise PDF documents for relevant evidence.",
+            data=f"Searching indexed enterprise PDF documents{' (' + doc_id + ')' if doc_id else ''} for relevant evidence.",
         )
     )
 
-    # Invoke search_document_evidence tool directly
+    # Invoke search_document_evidence tool directly with optional document_id scoping
     try:
-        rag_output = await search_document_evidence.ainvoke({"question": user_query})
+        rag_output = await search_document_evidence.ainvoke({"question": user_query, "document_id": doc_id})
         tool_results.append({"tool": "search_document_evidence", "result": rag_output})
         count = rag_output.get("retrieved_count", 0)
         activities.append(
@@ -384,7 +391,7 @@ async def synthesize_node(state: AgentConversationState) -> dict[str, Any]:
             if prev_user_texts:
                 context_str = " ".join(prev_user_texts)
                 return f"Based on our conversation context: {context_str}. (Re: {user_query})"
-            return "Hello! I am your Enterprise AI Assistant. How can I help you today?"
+            return "Hello! I am AURA, your Agentic Understanding & Retrieval Assistant. How can I help you today?"
         summaries = []
         for item in results:
             t = item.get("tool")
@@ -436,8 +443,46 @@ async def synthesize_node(state: AgentConversationState) -> dict[str, Any]:
     ai_message = AIMessage(content=answer_text)
     messages.append(ai_message)
 
+    # Extract citations, warnings, reports, actions for Phase 8 contracts
+    citations = []
+    warnings = list(state.get("warnings") or [])
+    reports = list(state.get("reports") or [])
+    actions = list(state.get("actions") or [])
+
+    for tr in tool_results:
+        if tr.get("tool") == "search_document_evidence" and tr.get("result"):
+            c_list = tr["result"].get("citations") or []
+            for c in c_list:
+                if c not in citations:
+                    citations.append(c)
+        if tr.get("error"):
+            warnings.append(f"{tr.get('tool')}: {tr.get('error')}")
+
+    if (any(k in user_query.lower() for k in ["report", "summary", "insight"]) or len(tool_results) >= 1) and not reports:
+        from poc_kanini.services.report_service import generate_report
+        rtype = "executive_summary"
+        if "dataset" in user_query.lower() or "csv" in user_query.lower():
+            rtype = "dataset_analysis"
+        elif "document" in user_query.lower() or "pdf" in user_query.lower():
+            rtype = "document_analysis"
+        elif "image" in user_query.lower() or "photo" in user_query.lower():
+            rtype = "image_analysis"
+
+        report_payload = generate_report(
+            report_type=rtype,
+            tool_results=tool_results,
+            user_query=user_query,
+            citations=citations,
+        )
+        reports.append(report_payload.model_dump())
+
     return {
         "messages": messages,
         "activities": activities,
+        "citations": citations,
+        "tool_results": tool_results,
+        "warnings": warnings,
+        "reports": reports,
+        "actions": actions,
         "approval_required": False,
     }

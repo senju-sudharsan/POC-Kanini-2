@@ -1,9 +1,8 @@
-# POC Kanini 2
+# POC-Kanini-2 / AURA
 
-POC Kanini 2 is being developed as an Enterprise AI Assistant / Decision Agent.
-It combines Data Science, Generative AI, and Agentic AI capabilities behind a
-React frontend, FastAPI backend, Gemini, and LangGraph. The document chatbot is
-a major feature, but not the whole product.
+**AURA (Agentic Understanding & Retrieval Assistant)** is a multimodal agentic AI assistant that understands documents, images, text, and structured datasets; retrieves grounded information; performs data analysis and machine learning; orchestrates specialised capabilities; maintains conversational context; and produces structured decision-support outputs.
+
+POC-Kanini-2 is the engineering repository for AURA. It combines Data Science, Generative AI, and Agentic AI capabilities behind a React frontend, FastAPI backend, Gemini, and LangGraph. The document chatbot is a major feature, but not the whole product.
 
 The initial migration preserves selected UI, FastAPI, Gemini configuration, and
 LangGraph state patterns from `gemini-base/`. The reference directory is
@@ -82,14 +81,69 @@ containing an answer, visual observations, category-tagged detected elements,
 uncertainty notes, and source metadata. Models return uncertainty as text notes
 rather than fabricated confidence scores.
 
-Phase 5 introduces standard LangChain `@tool` specifications in `backend/src/poc_kanini/tools/`:
-- `search_document_evidence`: RAG evidence retrieval and citations.
-- `profile_dataset_tool`: Tabular dataset profiling.
-- `train_ml_model_tool`: Supervised ML classification/regression model training.
-- `predict_ml_model_tool`: Predictions via cached model UUIDs.
-- `analyze_image_tool`: Multimodal image analysis using base64 image strings.
-All tools enforce strict security boundaries (rejecting unvalidated local file paths) and are registered in `ALL_TOOLS` for future Phase 6 LangGraph agent tool binding.
+Phase 5 adds an independent Tool Layer (`search_document_evidence`,
+`profile_dataset_tool`, `train_ml_model_tool`, `predict_ml_model_tool`, `analyze_image_tool`)
+and tool registry (`ALL_TOOLS`). Phase 6 adds a flat hybrid LangGraph StateGraph with
+supervisor routing, 5 specialist nodes, bounded cross-specialist transitions, and
+citation-preserving synthesis. Phase 7 adds thread-scoped `MemorySaver` checkpointing,
+short-term memory context, reflection node error recovery, and human-in-the-loop (HITL)
+approval boundaries.
+
+Phase 8 completes the unified enterprise assistant product experience:
+- **Unified Assistant Interface (`POST /api/chat`)**: A single conversational entry point routing text, documents, images, datasets, ML training, predictions, and reports.
+- **Document Upload & Thread Association**: PDF uploads indexed via `/api/documents/index` are automatically associated with current thread context for grounded answer generation with `[filename — Page X]` citations.
+- **Multimodal Chat**: Attach JPEG, PNG, or WEBP images directly in chat as Base64 payloads; analyzed by `analyze_image_tool` with observations rendered in message timeline.
+- **Structured Tool Result Cards**: Frontend renders dedicated cards for evidence citations, ML evaluation metrics grids (Accuracy, F1, Precision, Recall, MAE, R²), visual observations, and warnings.
+- **Structured Domain Reports (`POST /api/reports/generate`)**: Synthesizes structured `ReportPayload` cards (executive summaries, dataset analysis, document intelligence, visual inspection reports).
+- **Controlled Action Abstraction (`POST /api/actions/execute`)**: Safe local action abstraction (`ActionRequest`/`ActionResult`) enforcing human approval boundaries when controlled operations are detected.
 
 ChromaDB stores local vectors in `data/chroma` by default. Set
 `GEMINI_EMBEDDING_MODEL`, `RAG_VECTOR_STORE_DIR`, and `RAG_TOP_K` only when
 overriding their defaults.
+
+## Phase 9 — Production Hardening (complete)
+
+Phase 9 hardened the system for deployment readiness without redesigning the frontend or replacing any working architecture.
+
+**Changes in Phase 9:**
+
+- **CORS middleware** added with restrictive allowlist (`cors_origins` setting, overrideable via env).
+- **Typed report request model** — `POST /api/reports/generate` now validates the request body through Pydantic, rejecting unknown `report_type` values with 422.
+- **Provider error classification** — Gemini errors are mapped to correct HTTP codes: 429 rate limit, 401 auth failure, 504 timeout, 503 unavailable. Raw stack traces never reach the client.
+- **Structured startup logging** — root logger configured at `INFO`, noisy third-party loggers suppressed.
+- **Filename sanitisation** — all upload endpoints strip directory components from client-supplied filenames, preventing path traversal.
+- **35 new E2E integration tests** covering all 9 verification flows (chat schema, RAG citations, multimodal validation, data profiling, ML round-trip, memory isolation, HITL, reports, and actions).
+- **Docker hardened** — multi-stage build, `.dockerignore`, `docker-compose.yml` with named Chroma volume and health check.
+
+## Docker quickstart
+
+```bash
+# Copy environment template and add your Gemini API key
+cp .env.example .env
+# Edit .env and set GEMINI_API_KEY=...
+
+# Build and start
+docker compose up --build
+
+# AURA is served at http://localhost:8000/app
+# API at http://localhost:8000/api/
+```
+
+The Chroma vector store is persisted in a named Docker volume (`aura_chroma`) so indexed documents survive container restarts.
+
+## Test results (Phase 9)
+
+| Suite | Tests | Result |
+|---|---|---|
+| Phases 1–8 (regression) | 123 | ✓ passed |
+| Phase 9 (new E2E + security) | 35 | ✓ passed |
+| **Total** | **158** | **✓ 0 failures** |
+| Frontend build | — | ✓ passed |
+
+## Security boundaries
+
+- Uploaded files: type-validated, size-limited (20 MiB), filename sanitised — no path traversal
+- Base64 image attachments only — no external URL fetching
+- Controlled actions only: no shell execution, no subprocess, no arbitrary filesystem access, no external HTTP, no database mutation
+- CORS: explicit allowlist — not wildcard
+- Error responses: provider errors mapped to HTTP status — no raw stack traces or API keys exposed

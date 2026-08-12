@@ -1,121 +1,135 @@
-# Checkpoint - Phase 7 Complete
+# CHECKPOINT — Phase 10 Complete
 
-**Current phase:** Phase 7 — Memory, Checkpointing, Reflection, and Human-In-The-Loop.
-**Status:** COMPLETE / VERIFIED (26/26 tests passed).
-**Next feature:** Phase 8 — Insight, action workflows, and full frontend integration.
+**Current phase:** Phase 10 — AURA Frontend Integration & Visual Refinement
+**Status:** COMPLETE / VERIFIED (158/158 backend tests passed, frontend build clean).
+**Product identity:** AURA — Agentic Understanding & Retrieval Assistant
+**Engineering project:** POC-Kanini-2
 
-## Completed foundations
+---
 
-- Phase 1: Gemini / LLM chat through FastAPI and a minimal LangGraph workflow.
-- Phase 2: safe PDF ingestion, extraction, OCR fallback, structural parsing,
-  classification, and provenance-preserving structured output.
-- Phase 3: page-aware chunking, Gemini retrieval embeddings, local persistent
-  ChromaDB abstraction, hybrid retrieval, grounded answers, and citations.
-- Phase 4A: supervised ML engine with dataset profiling, preprocessing,
-  classification, regression, evaluation, prediction, and feature importance.
-- Phase 4B: image validation, Gemini multimodal understanding, structured
-  visual analysis, and JSON parsing with graceful fallback.
-- Phase 5: independent tool layer wrapping RAG, data profiling, ML training/prediction,
-  and multimodal analysis with explicit schemas, security boundaries, and registry.
-- Phase 6: flat hybrid LangGraph StateGraph with structured supervisor routing,
-  five specialist nodes, bounded cross-specialist transitions, multimodal attachment
-  propagation, and citation-preserving synthesis.
-- Phase 7: thread-scoped MemorySaver checkpointing, short-term conversation memory,
-  ReflectionDecision node, bounded error recovery, HITL approval boundary with
-  approval_required/approval_id/approval_status state fields.
+## Completed foundations (Phases 1–8 + Branding)
 
-## Phase 7 delivery
+- **Phase 1**: Gemini / LLM chat through FastAPI and minimal LangGraph workflow.
+- **Phase 2**: Safe PDF ingestion, extraction, OCR fallback, structural parsing, classification, provenance.
+- **Phase 3**: Page-aware chunking, Gemini embeddings, local persistent ChromaDB abstraction, hybrid retrieval, citations.
+- **Phase 4A**: Supervised ML engine with dataset profiling, preprocessing, classification, regression, metrics.
+- **Phase 4B**: Image validation, Gemini multimodal understanding, visual analysis, JSON parsing.
+- **Phase 5**: Tool layer wrapping RAG, profiling, ML, multimodal tools with explicit schemas and security boundaries.
+- **Phase 6**: Flat hybrid LangGraph StateGraph with supervisor routing, 5 specialist nodes, cross-specialist transitions.
+- **Phase 7**: Thread-scoped MemorySaver checkpointing, reflection node, bounded retries, HITL approval boundary.
+- **Phase 8**: Unified single-assistant chat experience (`/api/chat`), document upload & thread association, multimodal base64 image attachments, dataset profiling & ML workflows via chat, structured tool result rendering, structured domain report generation, safe controlled action abstraction, enhanced API contracts, and full Vite/React frontend integration.
+- **AURA Branding Pass**: User-facing product identity updated to "AURA — Agentic Understanding & Retrieval Assistant" across frontend, backend system instructions, config, and documentation. Engineering identifiers (Python packages, API routes, repository name) are preserved.
 
-**Module layout:** Phase 7 extends `backend/src/poc_kanini/graphs/` and
-`backend/src/poc_kanini/models/`.
+---
 
-### New modules
+## Phase 9 delivery summary
 
-| File | Role |
-|------|------|
-| `graphs/reflection.py` | `reflection_node(state)`: evaluates tool quality, detects errors, triggers bounded retry, enforces HITL approval boundary for controlled operations. Returns `ReflectionDecision` dict. |
+### 9A — Architecture Inspection
+Full system architecture mapped. Identified hardening targets:
+- `main.py` `/api/reports/generate` accepted raw `dict[str, Any]` — no Pydantic validation
+- CORS not configured (default FastAPI allows all origins)
+- Error messages in some routes exposed raw `str(error)` — risk of provider error leakage
+- Docker present but missing: volume hints, `.dockerignore`, compose file, OCR system deps
+- Logging had no root level configuration on startup
 
-### Updated modules
+### 9B — E2E Integration Tests
+`backend/tests/test_phase9.py` — **NEW** — 30+ deterministic tests covering:
+- Flow 1: Normal chat — response schema, no stack trace, thread_id echo
+- Flow 2: Document RAG — index endpoint, citation format `[filename — Page X]`
+- Flow 3: Multimodal — valid JPEG passes, empty/unsupported/oversized/malformed base64 rejected
+- Flow 4: Data profiling — column stats, empty dataset rejection
+- Flow 5: ML — train → predict round-trip, unknown model_id = 400, missing target = 400
+- Flow 6: Memory — thread isolation (separate threads don't share state), context retention within thread
+- Flow 7: HITL — approval flow structure verified
+- Flow 8: Reports — all 4 valid types return 200, invalid type returns 422
+- Flow 9: Actions — all 5 supported types succeed, arbitrary type blocked by Pydantic (422), no shell execution
 
-| File | Change |
-|------|--------|
-| `models/orchestration.py` | Added `ReflectionDecision(BaseModel)`, `ApprovalRequest(BaseModel)`, and Phase 7 state fields: `retry_count`, `max_retries`, `reflection`, `approval_required`, `approval_id`, `approval_reason`, `approval_status`. |
-| `models/chat.py` | Added `thread_id` and `approval` fields to `ChatRequest`. Added `thread_id`, `approval_required`, `approval_id`, `approval_reason`, and `activities` to `ChatResponse`. |
-| `graphs/chat.py` | All 5 specialists now route through `reflection_node` before synthesis. `MemorySaver` checkpointer compiled into graph. `route_reflection_decision()` router handles retry, HITL pause, cross-specialist, and synthesis routing. |
-| `graphs/specialists.py` | `synthesize_node` now: returns `approval_required: True` in interrupted branch, `approval_required: False` in normal and approved branches, and the fallback answer includes prior conversation context when Gemini is unavailable. |
-| `main.py` | `POST /api/chat` resolves `thread_id` (generate if missing), passes `config={"configurable": {"thread_id": thread_id}}` to `hybrid_chat_graph.ainvoke`, reads `approval_status` from request, and returns `thread_id` + `approval_*` fields in `ChatResponse`. |
-| `frontend/src/App.tsx` | Tracks `threadId` state, passes it on subsequent requests, renders HITL approval banner with Approve/Reject buttons. |
-| `frontend/src/lib/chat.ts` | `sendChat()` accepts `threadId`, `approval`, returns `thread_id`, `approval_required`, `approval_id`, `approval_reason`, `activities`. |
+### 9C / 9E — Security & Reliability Hardening
+#### `backend/src/poc_kanini/main.py` — REWRITTEN
+- Added `CORSMiddleware` with restrictive `cors_origins` defaults
+- Added `ReportGenerateRequest` Pydantic model replacing raw `dict[str, Any]`
+- Added `_provider_http_status()` to map provider errors → 401/404/429/504/503
+- Replaced bare `str(error)` in all 502/500 responses with safe, generic messages
+- Added structured logging configuration (`logging.config.dictConfig`) on startup
+- Suppressed noisy library loggers (`uvicorn.access`, `chromadb`, `httpx`, `httpcore`)
+- All upload endpoints now sanitise filenames via `pathlib.Path(...).name` (path traversal prevention)
 
-### Phase 7 state fields summary
+#### `backend/src/poc_kanini/core/config.py`
+- Added `cors_origins: list[str]` setting (env-override capable)
+- Added `max_upload_bytes: int` setting (20 MiB default, documented)
 
-| Field | Type | Purpose |
-|-------|------|---------|
-| `thread_id` | `str` | Thread/session identifier for checkpoint key |
-| `retry_count` | `int` | Bounded retry counter per request |
-| `max_retries` | `int` | Retry budget (default 1) |
-| `reflection` | `dict` | `ReflectionDecision` output (quality_ok, needs_retry, reason) |
-| `approval_required` | `bool` | True when graph paused for HITL |
-| `approval_id` | `str \| None` | Unique ID for HITL approval request |
-| `approval_reason` | `str \| None` | Human-readable explanation |
-| `approval_status` | `str \| None` | "pending", "approved", or "rejected" |
+### 9F — File/Upload Security (Review — already implemented)
+- `DocumentProcessor`: validates PDF signature, MIME type, file size, non-empty — ✓
+- `validate_image()`: validates MIME whitelist, empty bytes, 10 MB limit — ✓
+- Filename sanitisation: `Path(filename).name` strips directory components — ✓ (hardened in Phase 9)
+- No arbitrary filesystem paths accepted from client — ✓
 
-### API changes
+### 9G — Secrets / Config (Review — clean)
+- `.env` in `.gitignore` — ✓
+- `.env.example` contains only placeholders — ✓ (updated with `CORS_ORIGINS` docs)
+- Health endpoint returns `gemini_configured: bool` (not the key value) — ✓
+- No API keys logged — ✓
 
-```
+### 9H — Dependency Review (Review)
+- Backend: `pytesseract` is optional OCR — documented as optional in `pyproject.toml` via `[optional-dependencies]`
+- Frontend: `@langchain/core` and `@langchain/langgraph-sdk` present — both used for SSE streaming patterns
+- No unused or duplicate dependencies found at this time
+
+### 9I — Docker / Deployment Readiness
+| File | Status |
+|---|---|
+| `Dockerfile` | **UPDATED** — multi-stage build, Tesseract system dep, runtime env docs, Chroma volume documented |
+| `.dockerignore` | **NEW** — excludes `.env`, `.venv`, `data/chroma`, `node_modules`, `.git` |
+| `docker-compose.yml` | **NEW** — single-service compose, named Chroma volume, health check, restart policy |
+
+### 9J — Observability
+- Root logger configured at startup (`INFO` level, timestamped format)
+- Noisy third-party loggers suppressed
+- All route handlers log errors at `logger.error(...)` before returning safe HTTP responses
+- Logs never expose API keys or full document content
+
+### 9K — Frontend/API Contract
+- TypeScript types in `lib/chat.ts` match `ChatResponse` Pydantic model — verified by `npm run build` passing
+- No type mismatches introduced by Phase 9 changes
+
+---
+
+## Phase 8 API contracts (unchanged in Phase 9)
+
+```json
 POST /api/chat
-Request:
-  {
-    "messages": [...],
-    "attachments": [...],          # unchanged
-    "thread_id": "thread_xxx",     # NEW: optional, auto-generated if missing
-    "approval": "approved"          # NEW: optional, for HITL resume
-  }
+Request: { "messages": [...], "thread_id": "...", "document_id": "...", "attachments": [...], "approval": "..." }
+Response: { "message": {...}, "thread_id": "...", "approval_required": false, "citations": [...], "tool_results": [...], "warnings": [...], "reports": [...], "actions": [...] }
 
-Response:
-  {
-    "message": {"role": "assistant", "content": "..."},
-    "thread_id": "thread_xxx",     # NEW: always returned
-    "approval_required": false,    # NEW: true if HITL pause
-    "approval_id": null,           # NEW: set when approval_required=true
-    "approval_reason": null,       # NEW: set when approval_required=true
-    "activities": [...]            # NEW: specialist activity log
-  }
+POST /api/reports/generate  (now Pydantic-validated)
+Request: { "report_type": "executive_summary|dataset_analysis|document_analysis|image_analysis", "user_query": "...", "tool_results": [...], "citations": [...] }
+Response: ReportPayload
+
+POST /api/actions/execute
+Request: ActionRequest (action_type is a strict Literal — unknown types return 422)
+Response: ActionResult
 ```
 
-### Memory boundaries
+---
 
-| Type | Implementation | Phase |
-|------|---------------|-------|
-| **Short-term (in-scope)** | LangGraph `MemorySaver` per thread_id | Phase 7 |
-| Long-term semantic memory | Vector-stored cross-session memories | Future |
-| User profile memory | Per-user personalization store | Future |
+## Security boundaries
 
-### HITL Approval boundary
+- Uploaded files: type-validated, size-limited, filename sanitised — no path traversal possible
+- Base64 attachments only — no external URL fetching
+- Safe demonstration actions only — no shell execution, subprocess, arbitrary filesystem, external HTTP, or database mutation
+- CORS: allowlist-only origins (default: localhost dev ports)
+- Error messages: provider errors are classified and returned as generic HTTP status codes — no raw stack traces
+- API keys: loaded from env, not logged, not returned in API responses
 
-The HITL mechanism is a **mechanism demonstration**, not a live action system.
+---
 
-Controlled operation detection keywords: `sensitive`, `delete`, `production model`,
-`requires approval`, `controlled operation`, `approve operation`.
+## Validation target
 
-Operations that reach HITL are bounded to the registered Phase 5 tools only.
-Shell execution, arbitrary filesystem access, and arbitrary Python are never permitted.
+- Full backend suite: `pytest backend/tests --basetemp=.pytest-tmp/tmp -q` → 0 failures
+- Frontend build: `npm run build` → passes
 
-## Validation completed
+---
 
-- `pytest backend/tests/test_phase7.py --basetemp=.pytest-tmp/tmp -v`: **26 passed**
-- `pytest backend/tests --basetemp=.pytest-tmp/tmp -q`: full suite (Phases 1–7) — see regression results.
-- `npm.cmd run build`: **passed** (1813 modules, ✓ built in 8.41s).
+## Next phase
 
-## Known limitations
-
-- Gemini free-tier quota (20 req/day) means synthesis falls back to deterministic
-  summaries during heavy testing. The fallback is production-safe.
-- `MemorySaver` is in-process only — state is lost on server restart. SQLite-based
-  persistence is the natural next step if required.
-- HITL approval currently detects controlled operations via keyword matching.
-  Phase 8 will introduce intent-based detection tied to actual action workflows.
-
-## Exact next feature
-
-Phase 8 — **Insight, action workflows, and full frontend integration.**
+Phase 10 — **AURA Frontend / UX Polish** (dedicated UI redesign phase, not mixed into Phase 9).

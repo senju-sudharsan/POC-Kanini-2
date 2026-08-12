@@ -2,6 +2,26 @@ export type ChatMessage = { role: "user" | "assistant"; content: string; id: str
 
 export type ActivityEvent = { title: string; data: string };
 
+export type ImageAttachment = { filename: string; mime_type: string; data: string };
+
+export type Citation = { label: string; filename?: string; page_number?: number; chunk_id?: string };
+
+export type ToolResult = { tool: string; result?: unknown; error?: string };
+
+export type ReportSection = { title: string; content: string; bullet_points?: string[] };
+
+export type ReportPayload = {
+  report_type: string;
+  title: string;
+  summary: string;
+  sections: ReportSection[];
+  metrics?: Record<string, unknown>;
+  citations?: string[];
+  recommendations?: string[];
+};
+
+export type ActionResult = { action_type: string; status: string; summary: string; metadata?: Record<string, unknown> };
+
 export type ChatResponse = {
   message: { role: "assistant"; content: string };
   thread_id: string;
@@ -9,6 +29,11 @@ export type ChatResponse = {
   approval_id?: string | null;
   approval_reason?: string | null;
   activities?: ActivityEvent[];
+  citations?: Citation[];
+  tool_results?: ToolResult[];
+  warnings?: string[];
+  reports?: ReportPayload[];
+  actions?: ActionResult[];
 };
 
 type DocumentChatResponse = { answer: string; citations: { label: string }[] };
@@ -17,14 +42,19 @@ export async function sendChat(
   messages: ChatMessage[],
   threadId?: string | null,
   approval?: "approved" | "rejected" | null,
-  signal?: AbortSignal
-): Promise<{ message: ChatMessage; thread_id: string; approval_required?: boolean; approval_id?: string | null; approval_reason?: string | null; activities?: ActivityEvent[] }> {
+  signal?: AbortSignal,
+  documentId?: string | null,
+  attachments?: ImageAttachment[]
+): Promise<ChatResponse & { message: ChatMessage }> {
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       messages: messages.map(({ role, content }) => ({ role, content })),
       thread_id: threadId || undefined,
+      document_id: documentId || undefined,
+      document_ids: documentId ? [documentId] : undefined,
+      attachments: attachments && attachments.length ? attachments : undefined,
       approval: approval || undefined,
     }),
     signal,
@@ -35,12 +65,8 @@ export async function sendChat(
   if (!body || !("message" in body)) throw new Error("The assistant returned an invalid response.");
 
   return {
+    ...body,
     message: { ...body.message, id: crypto.randomUUID() },
-    thread_id: body.thread_id,
-    approval_required: body.approval_required,
-    approval_id: body.approval_id,
-    approval_reason: body.approval_reason,
-    activities: body.activities,
   };
 }
 

@@ -89,5 +89,13 @@ class AgentConversationState(TypedDict, total=False):
     # Error tracking
     error: str | None
 
+    # Phase 8 Extensions: Document association, citations, reports, actions, warnings
+    document_ids: list[str]
+    citations: list[dict]
+    reports: list[dict]
+    actions: list[dict]
+    warnings: list[str]
+
     # Thread/session tracking
     thread_id: str
+

@@ -1,0 +1,42 @@
+# Docker ignore file for AURA / POC-Kanini-2
+# Prevents secrets, dev artifacts, and runtime data from entering the image.
+
+# Secrets — never bake into image
+.env
+*.pem
+*.key
+
+# Python dev artifacts
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.pytest-tmp/
+dist/
+build/
+*.egg
+
+# Node dev artifacts
+frontend/node_modules/
+frontend/dist/
+
+# Runtime / persisted data — mount as Docker volume instead
+data/chroma/
+
+# Version control
+.git/
+.gitignore
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Reference repo
+gemini-base/
+
+# Documentation artefacts
+docs/__pycache__/

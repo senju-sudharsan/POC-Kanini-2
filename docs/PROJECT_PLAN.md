@@ -1,4 +1,4 @@
-# Project Plan — Enterprise AI Assistant / Decision Agent
+# AURA — Project Plan (POC-Kanini-2)
 
 ## Product objective
 
@@ -36,8 +36,8 @@ retrieval, Gemini-grounded answers, and evidence/citations.
 | 5 | Tools + Support/RAG/Data/ML specialist capabilities | COMPLETE |
 | 6 | LangGraph orchestration + planning + reasoning | COMPLETE |
 | 7 | Memory + checkpointing + reflection + human-in-the-loop | COMPLETE |
-| 8 | Insight + action + reports + full frontend integration | NEXT |
-| 9 | Google ADK / Vertex / Google ecosystem demonstrations | PLANNED |
+| 8 | Insight + action + reports + full frontend integration | COMPLETE |
+| 9 | Google ADK / Vertex / Google ecosystem demonstrations | NEXT |
 | 10 | Testing + evaluation + Docker + documentation + final demo | PLANNED |
 
 ## Priorities
