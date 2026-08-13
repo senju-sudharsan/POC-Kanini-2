@@ -93,8 +93,8 @@ class SupervisorRouter:
                 reason=data.get("reason", "Structured LLM classification"),
                 confidence=float(data.get("confidence", 0.9)),
             )
-        except Exception as error:
-            logger.warning("Supervisor LLM routing failed, falling back to heuristic: %s", error)
+        except Exception:
+            logger.warning("Supervisor LLM routing unavailable; falling back to heuristic routing.")
             return self._heuristic_route(user_query, has_documents=has_docs)
 
     def _heuristic_route(self, query: str, has_documents: bool = False) -> RouteDecision:

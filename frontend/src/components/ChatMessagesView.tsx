@@ -7,12 +7,13 @@ import { ToolResultCard } from "@/components/ToolResultCard";
 import { ReportCard } from "@/components/ReportCard";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type { ChatMessage, Citation, ToolResult, ReportPayload, ImageAttachment } from "@/lib/chat";
+import type { ChatMessage, Citation, ToolResult, ReportPayload, ImageAttachment, SynthesisStatus } from "@/lib/chat";
 
 export interface ExtendedChatMessage extends ChatMessage {
   citations?: Citation[];
   toolResults?: ToolResult[];
   warnings?: string[];
+  synthesisStatus?: SynthesisStatus;
   reports?: ReportPayload[];
   attachments?: ImageAttachment[];
 }
@@ -115,6 +116,7 @@ export function ChatMessagesView({
                 citations={message.citations}
                 toolResults={message.toolResults}
                 warnings={message.warnings}
+                synthesisStatus={message.synthesisStatus}
               />
               <ReportCard reports={message.reports} />
 

@@ -21,6 +21,7 @@ export type ReportPayload = {
 };
 
 export type ActionResult = { action_type: string; status: string; summary: string; metadata?: Record<string, unknown> };
+export type SynthesisStatus = "success" | "degraded" | "quota_exhausted";
 
 export type ChatResponse = {
   message: { role: "assistant"; content: string };
@@ -32,6 +33,7 @@ export type ChatResponse = {
   citations?: Citation[];
   tool_results?: ToolResult[];
   warnings?: string[];
+  synthesis_status?: SynthesisStatus;
   reports?: ReportPayload[];
   actions?: ActionResult[];
 };

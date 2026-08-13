@@ -27,6 +27,7 @@ export function ChatComposer({
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
   const [isUploadingDoc, setIsUploadingDoc] = useState(false);
+  const [documentUploadError, setDocumentUploadError] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const docInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -70,9 +71,19 @@ export function ChatComposer({
     const files = e.target.files;
     if (!files || !files.length) return;
     const file = files[0];
-    if (file.type !== "application/pdf" && !file.name.endsWith(".pdf")) return;
+    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+      setDocumentUploadError("Only PDF files can be attached.");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      setDocumentUploadError("The PDF exceeds the 20 MiB upload limit.");
+      e.target.value = "";
+      return;
+    }
 
     setIsUploadingDoc(true);
+    setDocumentUploadError(null);
     const formData = new FormData();
     formData.append("file", file);
 
@@ -81,14 +92,14 @@ export function ChatComposer({
         method: "POST",
         body: formData,
       });
-      if (res.ok) {
-        const data = await res.json();
-        const docId = data.document?.metadata?.document_id;
-        const filename = data.document?.metadata?.filename || file.name;
-        if (docId) onIndexed?.(docId, filename);
-      }
+      const data = await res.json().catch(() => null) as { document?: { metadata?: { document_id?: string; filename?: string } }; detail?: string } | null;
+      if (!res.ok) throw new Error(data?.detail || "Document indexing failed. Please try again.");
+      const docId = data?.document?.metadata?.document_id;
+      const filename = data?.document?.metadata?.filename || file.name;
+      if (!docId) throw new Error("Document indexing did not return a document ID.");
+      onIndexed?.(docId, filename);
     } catch (err) {
-      console.error("Document upload failed:", err);
+      setDocumentUploadError(err instanceof Error ? err.message : "Document indexing failed. Please try again.");
     } finally {
       setIsUploadingDoc(false);
       if (e.target) e.target.value = "";
@@ -137,7 +148,7 @@ export function ChatComposer({
         />
 
         {/* Attachment preview chips */}
-        {(attachments.length > 0 || documentName || isUploadingDoc) && (
+        {(attachments.length > 0 || documentName || isUploadingDoc || documentUploadError) && (
           <div className="px-4 pt-2.5 flex flex-wrap gap-2 items-center">
             {documentName && (
               <div className="flex items-center gap-1.5 bg-neutral-900 border border-blue-900/50 text-blue-300 text-xs pl-2.5 pr-1.5 py-1 rounded-full">
@@ -158,6 +169,12 @@ export function ChatComposer({
             {isUploadingDoc && (
               <div className="flex items-center gap-1.5 bg-neutral-900 border border-amber-900/50 text-amber-300 text-xs px-2.5 py-1 rounded-full animate-pulse">
                 <span>Indexing PDF...</span>
+              </div>
+            )}
+            {documentUploadError && (
+              <div className="flex items-center gap-1.5 bg-red-950/40 border border-red-800/60 text-red-200 text-xs px-2.5 py-1 rounded-full" role="alert">
+                <span>{documentUploadError}</span>
+                <button type="button" onClick={() => setDocumentUploadError(null)} className="hover:text-white" aria-label="Dismiss document upload error"><X className="w-3 h-3" /></button>
               </div>
             )}
             {attachments.map((att, idx) => (
@@ -199,6 +216,7 @@ export function ChatComposer({
                 size="icon"
                 className="h-8 w-8 text-neutral-400 hover:text-neutral-200"
                 onClick={() => docInputRef.current?.click()}
+                disabled={isUploadingDoc}
                 title="Attach PDF Document"
                 aria-label="Attach PDF Document"
               >

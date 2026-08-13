@@ -7,7 +7,7 @@ import { ChatMessagesView, type ExtendedChatMessage } from "@/components/ChatMes
 import { Topbar } from "@/components/Topbar";
 import { WelcomeScreen } from "@/components/WelcomeScreen";
 import { Button } from "@/components/ui/button";
-import { sendChat, type ImageAttachment } from "@/lib/chat";
+import { sendChat, type ImageAttachment, type SynthesisStatus } from "@/lib/chat";
 
 export default function App() {
   const [messages, setMessages] = useState<ExtendedChatMessage[]>([]);
@@ -21,6 +21,8 @@ export default function App() {
   const [documentName, setDocumentName] = useState<string | null>(null);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] = useState<{ approvalId: string; reason: string } | null>(null);
+  const [geminiRequestCount, setGeminiRequestCount] = useState(0);
+  const [lastSynthesisStatus, setLastSynthesisStatus] = useState<SynthesisStatus | undefined>();
   const controllerRef = useRef<AbortController | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
@@ -92,12 +94,15 @@ export default function App() {
         );
 
         setThreadId(res.thread_id);
+        setGeminiRequestCount((count) => count + 1);
+        setLastSynthesisStatus(res.synthesis_status);
 
         const assistantMsg: ExtendedChatMessage = {
           ...res.message,
           citations: res.citations,
           toolResults: res.tool_results,
           warnings: res.warnings,
+          synthesisStatus: res.synthesis_status,
           reports: res.reports,
         };
 
@@ -144,6 +149,8 @@ export default function App() {
     setError(null);
     setThreadId(null);
     setPendingApproval(null);
+    setGeminiRequestCount(0);
+    setLastSynthesisStatus(undefined);
   };
 
   const cancel = useCallback(() => controllerRef.current?.abort(), []);
@@ -154,6 +161,8 @@ export default function App() {
         documentName={documentName}
         onResetChat={handleResetChat}
         onUnlinkDocument={handleUnlinkDocument}
+        geminiRequestCount={geminiRequestCount}
+        lastSynthesisStatus={lastSynthesisStatus}
       />
 
       <main className="conversation-container">

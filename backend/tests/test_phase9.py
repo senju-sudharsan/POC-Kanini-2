@@ -925,3 +925,366 @@ def test_synthesis_no_evidence_gives_safe_response():
         "no information",
     ]), f"Expected safe 'no evidence' response, got: {ai_msg.content}"
 
+
+# ---------------------------------------------------------------------------
+# RAG Factual / Heuristic Synthesis Output Tests
+# ---------------------------------------------------------------------------
+
+def _legacy_synthesis_specialization_factual_answer():
+    """Asking about specialization must return a concise grounded answer, not raw resume dump."""
+    from poc_kanini.graphs.specialists import synthesize_node
+    from langchain_core.messages import HumanMessage
+
+    state = {
+        "messages": [HumanMessage(content="What does this guy specialize at?")],
+        "tool_results": [
+            {
+                "tool": "search_document_evidence",
+                "result": {
+                    "evidence": [
+                        {"text": "SUDHARSAN S A\nSUMMARY\nSKILLS\nData Science Intern at Kanini...", "document_id": "d1",
+                         "filename": "resume.pdf", "page_number": 1, "chunk_id": "c1", "score": 0.9, "distance": 0.1},
+                    ],
+                    "citations": [
+                        {"label": "resume.pdf — Page 1", "filename": "resume.pdf", "page_number": 1},
+                    ],
+                    "retrieved_count": 1,
+                    "summary": "Retrieved 1 evidence snippet.",
+                },
+            }
+        ],
+        "activities": [],
+        "warnings": [],
+        "reports": [],
+        "actions": [],
+        "step_count": 1,
+    }
+
+    # Force fallback to test the deterministic text generator
+    with patch("poc_kanini.graphs.specialists.get_settings") as mock_settings:
+        mock_settings.return_value.gemini_api_key = None
+        result = asyncio.run(synthesize_node(state))
+
+    ai_msg = result["messages"][-1].content
+    assert "specializes in Data Science" in ai_msg
+    assert "SUDHARSAN S A\nSUMMARY" not in ai_msg, "Should not dump raw retrieved resume headers"
+    assert "[resume.pdf — Page 1]" in ai_msg
+
+
+def _legacy_synthesis_education_factual_answer():
+    """Asking about education must return SRM University and Guru Nanak College details."""
+    from poc_kanini.graphs.specialists import synthesize_node
+    from langchain_core.messages import HumanMessage
+
+    state = {
+        "messages": [HumanMessage(content="Where did he study?")],
+        "tool_results": [
+            {
+                "tool": "search_document_evidence",
+                "result": {
+                    "evidence": [
+                        {"text": "EDUCATION\nM.Sc. Data Science at SRM University (2024-2026)\nB.Sc. Computer Science at Guru Nanak College (2021-2024)", "document_id": "d1",
+                         "filename": "resume.pdf", "page_number": 1, "chunk_id": "c1", "score": 0.9, "distance": 0.1},
+                    ],
+                    "citations": [
+                        {"label": "resume.pdf — Page 1", "filename": "resume.pdf", "page_number": 1},
+                    ],
+                    "retrieved_count": 1,
+                    "summary": "Retrieved 1 evidence snippet.",
+                },
+            }
+        ],
+        "activities": [],
+        "warnings": [],
+        "reports": [],
+        "actions": [],
+        "step_count": 1,
+    }
+
+    with patch("poc_kanini.graphs.specialists.get_settings") as mock_settings:
+        mock_settings.return_value.gemini_api_key = None
+        result = asyncio.run(synthesize_node(state))
+
+    ai_msg = result["messages"][-1].content
+    assert "SRM University" in ai_msg
+    assert "Guru Nanak College" in ai_msg
+    assert "M.Sc. Data Science" in ai_msg
+    assert "B.Sc. Computer Science" in ai_msg
+    assert "[resume.pdf — Page 1]" in ai_msg
+
+
+def _legacy_synthesis_strongest_skill_qualified_inference():
+    """Asking about strongest skill must return a qualified inference (e.g. 'appears to be')."""
+    from poc_kanini.graphs.specialists import synthesize_node
+    from langchain_core.messages import HumanMessage
+
+    state = {
+        "messages": [HumanMessage(content="What is his strongest skill?")],
+        "tool_results": [
+            {
+                "tool": "search_document_evidence",
+                "result": {
+                    "evidence": [
+                        {"text": "SKILLS\nMachine Learning, Deep Learning, SQL, Python", "document_id": "d1",
+                         "filename": "resume.pdf", "page_number": 1, "chunk_id": "c1", "score": 0.9, "distance": 0.1},
+                    ],
+                    "citations": [
+                        {"label": "resume.pdf — Page 1", "filename": "resume.pdf", "page_number": 1},
+                    ],
+                    "retrieved_count": 1,
+                    "summary": "Retrieved 1 evidence snippet.",
+                },
+            }
+        ],
+        "activities": [],
+        "warnings": [],
+        "reports": [],
+        "actions": [],
+        "step_count": 1,
+    }
+
+    with patch("poc_kanini.graphs.specialists.get_settings") as mock_settings:
+        mock_settings.return_value.gemini_api_key = None
+        result = asyncio.run(synthesize_node(state))
+
+    ai_msg = result["messages"][-1].content
+    assert "appears to be" in ai_msg or "based on the resume" in ai_msg
+    assert "Machine Learning / AI" in ai_msg
+    assert "[resume.pdf — Page 1]" in ai_msg
+
+
+def _legacy_synthesis_fallback_uses_current_question_once_with_accumulated_rag_results():
+    """Historical RAG results must not duplicate the current fallback answer."""
+    from poc_kanini.graphs.specialists import synthesize_node
+
+    citation = {"label": "resume.pdf — Page 1", "filename": "resume.pdf", "page_number": 1}
+    specialization = {"tool": "search_document_evidence", "result": {
+        "evidence": [{"text": "Data Science and Machine Learning projects."}], "citations": [citation],
+    }}
+    education = {"tool": "search_document_evidence", "result": {
+        "evidence": [{"text": "EDUCATION\nM.Sc. Data Science at SRM University (2024-2026)\nB.Sc. Computer Science at Guru Nanak College (2021-2024)"}], "citations": [citation],
+    }}
+    strongest_skill = {"tool": "search_document_evidence", "result": {
+        "evidence": [{"text": "SKILLS\nMachine Learning, Deep Learning, SQL, Python"}], "citations": [citation],
+    }}
+
+    def synthesize(question, results):
+        state = {"messages": [HumanMessage(content=question)], "tool_results": results,
+                 "activities": [], "warnings": [], "reports": [], "actions": [], "step_count": 1}
+        with patch("poc_kanini.graphs.specialists.get_settings") as mock_settings:
+            mock_settings.return_value.gemini_api_key = None
+            return asyncio.run(synthesize_node(state))["messages"][-1].content
+
+    first = synthesize("What does this guy specialize at?", [specialization])
+    second = synthesize("Where did he study?", [specialization, education])
+    third = synthesize("What is his strongest skill?", [specialization, education, strongest_skill])
+
+    assert first.count("Based on the document, he specializes") == 1
+    assert second.count("He studied M.Sc. Data Science") == 1
+    assert "Based on the document, he specializes" not in second
+    assert third.count("his strongest area appears to be Machine Learning / AI") == 1
+    assert "He studied M.Sc. Data Science" not in third
+    assert third.count("[resume.pdf — Page 1]") == 1
+
+
+def _legacy_synthesis_gemini_path_receives_no_raw_chunk_instruction():
+    """Gemini synthesis is instructed to transform rather than dump RAG chunks."""
+    from poc_kanini.graphs.specialists import synthesize_node
+
+    state = {
+        "messages": [HumanMessage(content="What does this guy specialize at?")],
+        "tool_results": [{"tool": "search_document_evidence", "result": {
+            "evidence": [{"text": "SUDHARSAN S A SUMMARY SKILLS Data Science and Machine Learning"}],
+            "citations": [{"label": "resume.pdf — Page 1", "filename": "resume.pdf", "page_number": 1}],
+        }}],
+        "activities": [], "warnings": [], "reports": [], "actions": [], "step_count": 1,
+    }
+    response = MagicMock()
+    response.text = "He specializes in Data Science and Machine Learning.\n\n[resume.pdf — Page 1]"
+    client = MagicMock()
+    client.aio.models.generate_content = AsyncMock(return_value=response)
+
+    with patch("poc_kanini.graphs.specialists.get_settings") as mock_settings, \
+         patch("poc_kanini.graphs.specialists.genai.Client", return_value=client), \
+         patch("poc_kanini.graphs.specialists.types.GenerateContentConfig") as mock_config:
+        mock_settings.return_value.gemini_api_key = "test-key"
+        mock_settings.return_value.gemini_model = "gemini-test"
+        mock_settings.return_value.gemini_temperature = 0.1
+        mock_settings.return_value.gemini_max_output_tokens = 256
+        result = asyncio.run(synthesize_node(state))
+
+    assert "SUDHARSAN S A SUMMARY" not in result["messages"][-1].content
+    assert result["messages"][-1].content.count("[resume.pdf — Page 1]") == 1
+    instruction = mock_config.call_args.kwargs["system_instruction"]
+    assert "NEVER copy or output raw retrieved document text or database chunks verbatim in a giant block" in instruction
+
+
+@pytest.mark.parametrize(
+    ("question", "evidence_text", "filename", "page"),
+    [
+        ("What does this person specialize in?", "The subject works in data engineering.", "profile.pdf", 1),
+        ("How did revenue change?", "Revenue increased 18% year over year.", "report.pdf", 4),
+        ("What is the operating temperature?", "The device operates between 0°C and 40°C.", "manual.pdf", 7),
+        ("How can the agreement be terminated?", "The agreement terminates after 30 days written notice.", "agreement.pdf", 3),
+        ("What improvement did the method achieve?", "The proposed method improved accuracy by 12%.", "research.pdf", 8),
+    ],
+)
+def test_synthesis_generic_fallback_uses_compact_current_evidence(question, evidence_text, filename, page):
+    """Fallback works for arbitrary documents without document-specific rules."""
+    from poc_kanini.graphs.specialists import synthesize_node
+
+    state = {
+        "messages": [HumanMessage(content=question)],
+        "tool_results": [{"tool": "search_document_evidence", "query": question, "result": {
+            "evidence": [{"text": evidence_text}],
+            "citations": [{"filename": filename, "page_number": page}],
+        }}],
+        "activities": [], "warnings": [], "reports": [], "actions": [], "step_count": 1,
+    }
+    with patch("poc_kanini.graphs.specialists.get_settings") as mock_settings:
+        mock_settings.return_value.gemini_api_key = None
+        content = asyncio.run(synthesize_node(state))["messages"][-1].content
+
+    assert evidence_text in content
+    assert "unable to fully synthesize" in content
+    assert content.count(f"[{filename}") == 1
+    assert len(content) < 700
+
+
+def test_synthesis_isolates_current_turn_rag_result():
+    """Accumulated historical RAG results cannot contaminate the latest response."""
+    from poc_kanini.graphs.specialists import synthesize_node
+
+    turns = [
+        ("What does this person specialize in?", "The subject works in data engineering."),
+        ("How did revenue change?", "Revenue increased 18% year over year."),
+        ("What improvement did the method achieve?", "The proposed method improved accuracy by 12%."),
+    ]
+    results = [
+        {"tool": "search_document_evidence", "query": question, "result": {
+            "evidence": [{"text": evidence}], "citations": [{"filename": "document.pdf", "page_number": index + 1}],
+        }}
+        for index, (question, evidence) in enumerate(turns)
+    ]
+    question, expected = turns[-1]
+    state = {"messages": [HumanMessage(content=question)], "tool_results": results,
+             "activities": [], "warnings": [], "reports": [], "actions": [], "step_count": 1}
+    with patch("poc_kanini.graphs.specialists.get_settings") as mock_settings:
+        mock_settings.return_value.gemini_api_key = None
+        content = asyncio.run(synthesize_node(state))["messages"][-1].content
+
+    assert content.count(expected) == 1
+    assert turns[0][1] not in content
+    assert turns[1][1] not in content
+    assert content.count("[document.pdf") == 1
+
+
+def test_synthesis_gemini_instruction_is_generic_and_prevents_chunk_dumps():
+    """The primary Gemini path receives generic anti-dump synthesis guidance."""
+    from poc_kanini.graphs.specialists import SYNTHESIS_SYSTEM_INSTRUCTION
+
+    assert "directly" in SYNTHESIS_SYSTEM_INSTRUCTION.lower()
+    assert "ground" in SYNTHESIS_SYSTEM_INSTRUCTION.lower()
+    assert "NEVER copy or output raw retrieved document text or database chunks verbatim in a giant block" in SYNTHESIS_SYSTEM_INSTRUCTION
+    assert "SRM University" not in SYNTHESIS_SYSTEM_INSTRUCTION
+    assert "Machine Learning / AI" not in SYNTHESIS_SYSTEM_INSTRUCTION
+
+
+def test_synthesis_general_capability_question_does_not_echo_history():
+    """General follow-up questions use AURA capability guidance, not raw history."""
+    from langchain_core.messages import AIMessage
+    from poc_kanini.graphs.specialists import synthesize_node
+
+    state = {
+        "messages": [
+            HumanMessage(content="hi"),
+            AIMessage(content="Hello!"),
+            HumanMessage(content="what can you do?"),
+        ],
+        "tool_results": [], "activities": [], "warnings": [], "reports": [], "actions": [], "step_count": 1,
+    }
+    with patch("poc_kanini.graphs.specialists.get_settings") as mock_settings:
+        mock_settings.return_value.gemini_api_key = None
+        content = asyncio.run(synthesize_node(state))["messages"][-1].content
+
+    assert "Based on our conversation context" not in content
+    assert "document evidence" in content.lower()
+    assert "image analysis" in content.lower()
+    assert "dataset profiling" in content.lower()
+
+
+def test_document_index_sanitizes_filename_and_hides_embedding_provider_error():
+    """Indexing rejects provider details while passing a safe basename to the processor."""
+    fake_pdf = b"%PDF-1.4 safe content %EOF"
+    with patch("poc_kanini.main.DocumentProcessor") as processor_cls, \
+         patch("poc_kanini.main.rag_service") as rag_service_fn:
+        processor_cls.return_value.process.return_value = MagicMock()
+        rag_service_fn.return_value.index_document = AsyncMock(side_effect=Exception("401 UNAUTHENTICATED secret-key"))
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/documents/index",
+                files={"file": ("../../sensitive.pdf", fake_pdf, "application/pdf")},
+            )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Document indexing is unavailable. Check the embedding service configuration."
+    assert "secret-key" not in response.text
+    assert processor_cls.return_value.process.call_args.args[1] == "sensitive.pdf"
+
+
+class _ProviderError(Exception):
+    def __init__(self, status_code=None, message="provider error"):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_status", "expected_warning"),
+    [
+        (_ProviderError(429, "RESOURCE_EXHAUSTED"), "quota_exhausted", "Gemini usage limit reached."),
+        (_ProviderError(401, "UNAUTHENTICATED"), "degraded", "Gemini API authentication failed."),
+        (_ProviderError(403, "PERMISSION_DENIED"), "degraded", "Gemini API access was denied."),
+        (_ProviderError(404, "NOT_FOUND"), "degraded", "The configured Gemini model is unavailable."),
+        (_ProviderError(503, "UNAVAILABLE"), "degraded", "Gemini is temporarily unavailable."),
+        (TimeoutError("request timed out"), "degraded", "AURA could not reach the Gemini service."),
+        (_ProviderError(None, "Cannot connect to host"), "degraded", "AURA could not reach the Gemini service."),
+    ],
+)
+def test_synthesis_classifies_gemini_provider_failures_safely(error, expected_status, expected_warning):
+    """Provider details map to safe, actionable synthesis warnings."""
+    from poc_kanini.graphs.specialists import _gemini_synthesis_warning
+
+    status, warning = _gemini_synthesis_warning(error)
+
+    assert status == expected_status
+    assert warning.startswith(expected_warning)
+    assert "provider error" not in warning
+    assert "stack" not in warning.lower()
+
+
+def test_synthesis_provider_failure_returns_fallback_with_warning_and_status():
+    """A provider failure keeps the generic fallback but marks it as degraded."""
+    from poc_kanini.graphs.specialists import synthesize_node
+
+    state = {
+        "messages": [HumanMessage(content="What changed?")],
+        "tool_results": [{"tool": "search_document_evidence", "query": "What changed?", "result": {
+            "evidence": [{"text": "Revenue increased 18% year over year."}],
+            "citations": [{"filename": "report.pdf", "page_number": 4}],
+        }}],
+        "activities": [], "warnings": [], "reports": [], "actions": [], "step_count": 1,
+    }
+    client = MagicMock()
+    client.aio.models.generate_content = AsyncMock(side_effect=_ProviderError(429, "RESOURCE_EXHAUSTED secret-value"))
+    with patch("poc_kanini.graphs.specialists.get_settings") as mock_settings, \
+         patch("poc_kanini.graphs.specialists.genai.Client", return_value=client):
+        mock_settings.return_value.gemini_api_key = "configured-key"
+        mock_settings.return_value.gemini_model = "gemini-test"
+        mock_settings.return_value.gemini_temperature = 0.1
+        mock_settings.return_value.gemini_max_output_tokens = 256
+        result = asyncio.run(synthesize_node(state))
+
+    assert result["synthesis_status"] == "quota_exhausted"
+    assert result["warnings"] == ["Gemini usage limit reached. Please wait for the quota to reset or configure another Gemini API key/project."]
+    assert "Revenue increased 18% year over year." in result["messages"][-1].content
+    assert "secret-value" not in " ".join(result["warnings"])

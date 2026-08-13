@@ -95,7 +95,7 @@ class AgentConversationState(TypedDict, total=False):
     reports: list[dict]
     actions: list[dict]
     warnings: list[str]
+    synthesis_status: str
 
     # Thread/session tracking
     thread_id: str
-

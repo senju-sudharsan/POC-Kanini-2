@@ -40,6 +40,7 @@ COPY --from=frontend-builder /build/frontend/dist ./frontend/dist
 ENV GEMINI_API_KEY=""
 ENV GEMINI_MODEL="gemini-2.5-flash"
 ENV ENVIRONMENT="production"
+ENV FRONTEND_BUILD_DIR="/app/frontend/dist"
 ENV PYTHONUNBUFFERED=1
 
 # Chroma vector store persists to a volume.

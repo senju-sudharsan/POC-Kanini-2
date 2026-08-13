@@ -17,6 +17,7 @@ export function WelcomeScreen({
   onPromptSelect?: (prompt: string) => void;
 }) {
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const samplePrompts = [
     "What capabilities do you support?",
@@ -29,8 +30,19 @@ export function WelcomeScreen({
     const files = e.target.files;
     if (!files || !files.length) return;
     const file = files[0];
+    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+      setUploadError("Only PDF files can be attached.");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      setUploadError("The PDF exceeds the 20 MiB upload limit.");
+      e.target.value = "";
+      return;
+    }
 
     setIsUploading(true);
+    setUploadError(null);
     const formData = new FormData();
     formData.append("file", file);
 
@@ -39,14 +51,14 @@ export function WelcomeScreen({
         method: "POST",
         body: formData,
       });
-      if (res.ok) {
-        const data = await res.json();
-        const docId = data.document?.metadata?.document_id;
-        const filename = data.document?.metadata?.filename || file.name;
-        if (docId) onIndexed?.(docId, filename);
-      }
+      const data = await res.json().catch(() => null) as { document?: { metadata?: { document_id?: string; filename?: string } }; detail?: string } | null;
+      if (!res.ok) throw new Error(data?.detail || "Document indexing failed. Please try again.");
+      const docId = data?.document?.metadata?.document_id;
+      const filename = data?.document?.metadata?.filename || file.name;
+      if (!docId) throw new Error("Document indexing did not return a document ID.");
+      onIndexed?.(docId, filename);
     } catch (err) {
-      console.error("Document upload failed:", err);
+      setUploadError(err instanceof Error ? err.message : "Document indexing failed. Please try again.");
     } finally {
       setIsUploading(false);
       if (e.target) e.target.value = "";
@@ -107,6 +119,7 @@ export function WelcomeScreen({
           </label>
         )}
       </div>
+      {uploadError && <p className="mt-2 text-xs text-red-300" role="alert">{uploadError}</p>}
 
       {/* Suggested prompts */}
       {onPromptSelect && (

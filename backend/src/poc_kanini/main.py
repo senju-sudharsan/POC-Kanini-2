@@ -184,6 +184,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
         citations=result.get("citations") or [],
         tool_results=result.get("tool_results") or [],
         warnings=result.get("warnings") or [],
+        synthesis_status=result.get("synthesis_status") or "success",
         reports=result.get("reports") or [],
         actions=result.get("actions") or [],
     )
@@ -246,6 +247,12 @@ async def index_document(file: UploadFile = File(...)) -> dict[str, object]:
     except RuntimeError as error:
         logger.error("RAG indexing runtime error: %s", error)
         raise HTTPException(status_code=503, detail="Document indexing is unavailable. Check the embedding service configuration.") from error
+    except Exception as error:
+        logger.error("RAG indexing provider failure; status=%s", _provider_http_status(error))
+        raise HTTPException(
+            status_code=_provider_http_status(error),
+            detail="Document indexing is unavailable. Check the embedding service configuration.",
+        ) from error
 
 
 @app.post("/api/documents/chat")

@@ -1,18 +1,33 @@
 import { FileText, BarChart2, Eye, AlertTriangle } from "lucide-react";
-import type { Citation, ToolResult } from "@/lib/chat";
+import type { Citation, ToolResult, SynthesisStatus } from "@/lib/chat";
 
 interface Props {
   citations?: Citation[];
   toolResults?: ToolResult[];
   warnings?: string[];
+  synthesisStatus?: SynthesisStatus;
 }
 
-export function ToolResultCard({ citations, toolResults, warnings }: Props) {
-  if (!citations?.length && !toolResults?.length && !warnings?.length) return null;
+export function ToolResultCard({ citations, toolResults, warnings, synthesisStatus }: Props) {
+  const isDegraded = synthesisStatus === "degraded" || synthesisStatus === "quota_exhausted";
+  const statusTitle = synthesisStatus === "quota_exhausted" ? "Gemini usage limit reached" : "Gemini synthesis unavailable";
+  const statusDescription = synthesisStatus === "quota_exhausted"
+    ? "The AI provider quota is currently exhausted. Wait for the quota to reset or configure another Gemini API key."
+    : "AURA is showing a safe fallback based on the available evidence.";
+  if (!citations?.length && !toolResults?.length && !warnings?.length && !isDegraded) return null;
 
   return (
     <div className="mt-4 space-y-3 text-xs">
       {/* Warnings */}
+      {isDegraded && (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-950/40 p-3 text-amber-200" role="status">
+          <div className="flex items-center gap-2 font-medium text-amber-300">
+            <AlertTriangle size={14} />
+            <span>{statusTitle}</span>
+          </div>
+          <p className="mt-1 text-amber-200/80">{statusDescription}</p>
+        </div>
+      )}
       {warnings && warnings.length > 0 && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-950/30 p-3 text-amber-200">
           <div className="flex items-center gap-2 font-medium mb-1.5 text-amber-400">
