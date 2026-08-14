@@ -150,6 +150,8 @@ async def chat(request: ChatRequest) -> ChatResponse:
         if request.document_id and request.document_id not in doc_ids:
             doc_ids.insert(0, request.document_id)
         input_state["document_ids"] = doc_ids
+    if request.csv_data is not None:
+        input_state["csv_data"] = request.csv_data
     if request.approval:
         input_state["approval_status"] = request.approval
 

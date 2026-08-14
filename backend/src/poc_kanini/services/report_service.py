@@ -37,6 +37,7 @@ def generate_report(
                     bullet_points=[
                         f"Numeric columns: {', '.join(res.get('numeric_columns', [])) or 'None'}",
                         f"Categorical columns: {', '.join(res.get('categorical_columns', [])) or 'None'}",
+                        f"Datetime/Timestamp columns: {', '.join(res.get('datetime_columns', [])) or 'None'}",
                     ],
                 )
             )
@@ -75,15 +76,23 @@ def generate_report(
             recommendations.append(f"Evidence from {len(ev_list)} snippet(s) cited in this report.")
 
         elif tool_name == "analyze_image_tool":
-            obs = res.get("observations") or []
-            sections.append(
-                ReportSection(
-                    title="Multimodal Visual Analysis",
-                    content=res.get("answer", "Analyzed visual attachment."),
-                    bullet_points=obs[:5] if obs else ["Visual inspection completed."],
+            if item.get("error"):
+                sections.append(
+                    ReportSection(
+                        title="Multimodal Visual Analysis",
+                        content="Visual analysis was not completed due to an error.",
+                        bullet_points=[f"Error detail: {item.get('error')}"],
+                    )
                 )
-            )
-            recommendations.append("Confirm visual observation metadata against primary documentation.")
+            else:
+                obs = res.get("observations") or []
+                sections.append(
+                    ReportSection(
+                        title="Multimodal Visual Analysis",
+                        content=res.get("answer", "Analyzed visual attachment."),
+                        bullet_points=obs[:5] if obs else ["Visual inspection completed."],
+                    )
+                )
 
     if not sections:
         sections.append(

@@ -443,8 +443,34 @@ def test_api_chat_existing_text_only_still_works() -> None:
 
 
 def test_api_chat_stateful_context_retention() -> None:
-    """POST /api/chat passing thread_id retains conversational context across calls."""
-    with TestClient(app) as client:
+    """POST /api/chat passing thread_id retains conversational context across calls.
+
+    Gemini synthesis is mocked so the test is deterministic and does not consume
+    live API quota. The mock returns answers that reference the previous turn's
+    content, validating that the thread checkpoint carries state correctly.
+    """
+    # Synthesis mock: on the second call the model "knows" about Apollo because
+    # the checkpoint contains the prior HumanMessage.  We simulate this by
+    # building a response that echoes the thread context.
+    call_count = {"n": 0}
+
+    async def _mock_generate(model, contents, config):  # noqa: ARG001
+        call_count["n"] += 1
+        resp = MagicMock()
+        if call_count["n"] == 1:
+            resp.text = "Got it! I'll remember that your project is named Apollo."
+        else:
+            resp.text = "Based on what you told me earlier, your project is named Apollo."
+        return resp
+
+    mock_client = MagicMock()
+    mock_client.aio.models.generate_content = _mock_generate
+
+    with (
+        patch("poc_kanini.graphs.specialists.genai.Client", return_value=mock_client),
+        patch("poc_kanini.graphs.supervisor.genai.Client", return_value=mock_client),
+        TestClient(app) as client,
+    ):
         # Turn 1
         r1 = client.post(
             "/api/chat",
@@ -465,6 +491,7 @@ def test_api_chat_stateful_context_retention() -> None:
         body2 = r2.json()
         assert body2["thread_id"] == thread_id
         assert "Apollo" in body2["message"]["content"]
+
 
 
 def test_api_chat_approval_flow_via_endpoint() -> None:

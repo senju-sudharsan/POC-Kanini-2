@@ -14,6 +14,15 @@ from poc_kanini.models.orchestration import (
 logger = logging.getLogger(__name__)
 
 
+def _is_non_retryable_provider_error(error: str) -> bool:
+    """Avoid retrying provider failures that cannot succeed within this turn."""
+    text = error.lower()
+    return any(marker in text for marker in (
+        "429", "resource_exhausted", "quota", "rate limit",
+        "401", "unauthenticated", "403", "permission_denied",
+    ))
+
+
 def _get_latest_user_text(state: AgentConversationState) -> str:
     """Extract text from the latest user message in state."""
     messages = state.get("messages") or []
@@ -94,7 +103,7 @@ async def reflection_node(state: AgentConversationState) -> dict[str, Any]:
             err_dict = res.get("error") or res.get("result", {}).get("error")
             last_tool_error = str(err_dict)
 
-    if last_tool_error and retry_count < max_retries:
+    if last_tool_error and not _is_non_retryable_provider_error(last_tool_error) and retry_count < max_retries:
         new_retry_count = retry_count + 1
         activities.append(
             ActivityEvent(

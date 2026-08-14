@@ -695,6 +695,107 @@ def test_reliability_supervisor_routes_to_rag_when_document_attached() -> None:
     assert dec_rag.route == "rag"
 
 
+@pytest.mark.parametrize(
+    ("query", "document_ids", "expected_route"),
+    [
+        ("hi", [], "general"),
+        ("What can you do?", [], "general"),
+        ("What is this person's name?", ["doc_123"], "rag"),
+        ("Profile this dataset", [], "data"),
+        ("Train a model", [], "ml"),
+        ("Analyze this image", [], "multimodal"),
+    ],
+)
+def test_optimization_clear_intents_bypass_gemini_supervisor(query, document_ids, expected_route) -> None:
+    """High-confidence routes are local even when a Gemini key is configured."""
+    from poc_kanini.core.config import Settings
+    from poc_kanini.graphs.supervisor import SupervisorRouter
+
+    router = SupervisorRouter(Settings(gemini_api_key="test-key"))
+    with patch("poc_kanini.graphs.supervisor.genai.Client") as client:
+        decision = asyncio.run(router.route({
+            "messages": [HumanMessage(content=query)],
+            "document_ids": document_ids,
+        }))
+    assert decision.route == expected_route
+    client.assert_not_called()
+
+
+def test_optimization_ambiguous_request_still_uses_gemini_supervisor() -> None:
+    """Deterministic routing does not replace Gemini for ambiguous intents."""
+    from poc_kanini.core.config import Settings
+    from poc_kanini.graphs.supervisor import SupervisorRouter
+
+    response = MagicMock(text='{"route": "general", "reason": "Ambiguous", "confidence": 0.7}')
+    client = MagicMock()
+    client.aio.models.generate_content = AsyncMock(return_value=response)
+    router = SupervisorRouter(Settings(gemini_api_key="test-key"))
+    with patch("poc_kanini.graphs.supervisor.genai.Client", return_value=client) as client_factory:
+        decision = asyncio.run(router.route({"messages": [HumanMessage(content="Could you help me decide?")]}))
+    assert decision.route == "general"
+    client_factory.assert_called_once()
+    client.aio.models.generate_content.assert_awaited_once()
+
+
+def test_optimization_greeting_and_capability_skip_synthesis_gemini() -> None:
+    """Stable general replies do not make a synthesis request."""
+    from poc_kanini.graphs.specialists import synthesize_node
+
+    for query in ("hi", "What can you do?"):
+        with patch("poc_kanini.graphs.specialists.genai.Client") as client:
+            result = asyncio.run(synthesize_node({
+                "messages": [HumanMessage(content=query)],
+                "route": "general",
+            }))
+        client.assert_not_called()
+        assert result["synthesis_status"] == "success"
+        assert result["messages"][-1].content
+
+
+def test_optimization_rag_synthesis_makes_one_generative_call() -> None:
+    """The graph's final RAG synthesis invokes Gemini exactly once."""
+    from poc_kanini.graphs.specialists import synthesize_node
+
+    query = "What does this document say?"
+    response = MagicMock(text="The document states the leave allowance is twenty days.")
+    client = MagicMock()
+    client.aio.models.generate_content = AsyncMock(return_value=response)
+    settings = MagicMock(
+        gemini_api_key="test-key",
+        gemini_model="gemini-test",
+        gemini_temperature=0.0,
+        gemini_max_output_tokens=128,
+    )
+    state = {
+        "messages": [HumanMessage(content=query)],
+        "route": "rag",
+        "tool_results": [{"tool": "search_document_evidence", "query": query, "result": {
+            "evidence": [{"text": "Annual leave allowance is twenty days."}],
+            "citations": [{"filename": "policy.pdf", "page_number": 1}],
+        }}],
+    }
+    with patch("poc_kanini.graphs.specialists.get_settings", return_value=settings), \
+         patch("poc_kanini.graphs.specialists.genai.Client", return_value=client):
+        result = asyncio.run(synthesize_node(state))
+
+    assert result["synthesis_status"] == "success"
+    client.aio.models.generate_content.assert_awaited_once()
+
+
+def test_optimization_quota_error_does_not_trigger_reflection_retry() -> None:
+    """A known quota failure must reach degraded synthesis without another provider call."""
+    from poc_kanini.graphs.reflection import reflection_node
+
+    result = asyncio.run(reflection_node({
+        "tool_results": [{"tool": "search_document_evidence", "error": "429 RESOURCE_EXHAUSTED"}],
+        "retry_count": 0,
+        "max_retries": 1,
+        "messages": [HumanMessage(content="What does this document say?")],
+    }))
+    assert result["reflection"]["needs_retry"] is False
+    assert result.get("retry_count", 0) == 0
+
+
 def test_api_chat_preserves_document_ids_in_checkpoint() -> None:
     """API chat endpoint must preserve document_ids in checkpoints if omitted from subsequent payloads, and clear them if explicitly unlinked."""
     with TestClient(app) as client:

@@ -26,6 +26,8 @@ class ChatRequest(BaseModel):
     document_id: str | None = Field(default=None, description="Optional document ID associated with conversation")
     document_ids: list[str] = Field(default_factory=list, description="List of document IDs associated with conversation")
     approval: str | None = Field(default=None, pattern="^(approved|rejected)$", description="Human approval decision for interrupted operations")
+    csv_data: str | None = Field(default=None, description="Raw CSV file contents for dataset profiling. Sent by the frontend when the user attaches a .csv file.")
+
 
 
 class ChatResponse(BaseModel):

@@ -4,6 +4,8 @@ export type ActivityEvent = { title: string; data: string };
 
 export type ImageAttachment = { filename: string; mime_type: string; data: string };
 
+export type CsvAttachment = { filename: string; data: string };
+
 export type Citation = { label: string; filename?: string; page_number?: number; chunk_id?: string };
 
 export type ToolResult = { tool: string; result?: unknown; error?: string };
@@ -46,7 +48,8 @@ export async function sendChat(
   approval?: "approved" | "rejected" | null,
   signal?: AbortSignal,
   documentId?: string | null,
-  attachments?: ImageAttachment[]
+  attachments?: ImageAttachment[],
+  csvData?: string | null
 ): Promise<ChatResponse & { message: ChatMessage }> {
   const response = await fetch("/api/chat", {
     method: "POST",
@@ -58,6 +61,7 @@ export async function sendChat(
       document_ids: documentId ? [documentId] : [],
       attachments: attachments && attachments.length ? attachments : undefined,
       approval: approval || undefined,
+      csv_data: csvData || undefined,
     }),
     signal,
   });

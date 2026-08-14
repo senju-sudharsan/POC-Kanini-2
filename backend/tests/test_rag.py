@@ -8,10 +8,16 @@ from poc_kanini.rag.service import RagService
 
 
 class FakeEmbeddings:
+    def __init__(self):
+        self.document_calls = 0
+        self.query_calls = 0
+
     async def embed_documents(self, chunks):
+        self.document_calls += 1
         return [[float(index + 1)] for index, _ in enumerate(chunks)]
 
     async def embed_query(self, query):
+        self.query_calls += 1
         return [1.0]
 
 
@@ -66,6 +72,18 @@ def test_indexing_replaces_prior_document_chunks():
     assert count == 1
     assert store.deleted == ["doc-1"]
     assert store.upserted[0][0].document_id == "doc-1"
+
+
+def test_repeated_retrieval_of_an_indexed_document_does_not_reembed_chunks():
+    """Subsequent RAG questions embed only their query; stored chunk vectors are reused."""
+    embeddings = FakeEmbeddings()
+    service = RagService(Settings(), FakeStore([]), embeddings=embeddings)
+    asyncio.run(service.index_document(document()))
+    asyncio.run(service.retrieve_evidence("What is the leave allowance?", document_id="doc-1"))
+    asyncio.run(service.retrieve_evidence("How many leave days are available?", document_id="doc-1"))
+
+    assert embeddings.document_calls == 1
+    assert embeddings.query_calls == 2
 
 
 def test_insufficient_evidence_returns_no_fabricated_citations():

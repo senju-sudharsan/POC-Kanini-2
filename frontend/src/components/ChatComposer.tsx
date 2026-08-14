@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
-import { ArrowUp, FileText, Image as ImageIcon, Paperclip, Square, X } from "lucide-react";
+import { ArrowUp, FileText, Image as ImageIcon, Paperclip, Square, Table2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { ImageAttachment } from "@/lib/chat";
+import type { CsvAttachment, ImageAttachment } from "@/lib/chat";
 
 export function ChatComposer({
   onSubmit,
@@ -14,7 +14,7 @@ export function ChatComposer({
   documentName,
   auraState,
 }: {
-  onSubmit: (value: string, attachments?: ImageAttachment[]) => void;
+  onSubmit: (value: string, attachments?: ImageAttachment[], csvAttachment?: CsvAttachment) => void;
   onCancel?: () => void;
   isLoading: boolean;
   onFocusChange?: (focused: boolean) => void;
@@ -26,10 +26,13 @@ export function ChatComposer({
 }) {
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
+  const [csvAttachment, setCsvAttachment] = useState<CsvAttachment | null>(null);
   const [isUploadingDoc, setIsUploadingDoc] = useState(false);
   const [documentUploadError, setDocumentUploadError] = useState<string | null>(null);
+  const [csvUploadError, setCsvUploadError] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const docInputRef = useRef<HTMLInputElement>(null);
+  const csvInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handleTextChange = (text: string) => {
@@ -106,19 +109,45 @@ export function ChatComposer({
     }
   };
 
+  const handleCsvFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || !files.length) return;
+    const file = files[0];
+    const isCSV = file.type === "text/csv" || file.name.toLowerCase().endsWith(".csv");
+    if (!isCSV) {
+      setCsvUploadError("Only .csv files can be attached as datasets.");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      setCsvUploadError("The CSV file exceeds the 20 MiB upload limit.");
+      e.target.value = "";
+      return;
+    }
+    setCsvUploadError(null);
+    const reader = new FileReader();
+    reader.onload = () => {
+      setCsvAttachment({ filename: file.name, data: reader.result as string });
+    };
+    reader.onerror = () => setCsvUploadError("Failed to read the CSV file. Please try again.");
+    reader.readAsText(file);
+    if (e.target) e.target.value = "";
+  };
+
   const handleSubmit = useCallback(() => {
     const trimmed = value.trim();
-    if ((!trimmed && !attachments.length) || isLoading) return;
+    if ((!trimmed && !attachments.length && !csvAttachment) || isLoading) return;
 
-    onSubmit(trimmed, attachments.length ? attachments : undefined);
+    onSubmit(trimmed, attachments.length ? attachments : undefined, csvAttachment ?? undefined);
     setValue("");
     setAttachments([]);
+    setCsvAttachment(null);
     onTypingChange?.(false);
 
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [value, attachments, isLoading, onSubmit, onTypingChange]);
+  }, [value, attachments, csvAttachment, isLoading, onSubmit, onTypingChange]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -146,9 +175,16 @@ export function ChatComposer({
           accept="application/pdf"
           onChange={handleDocFileSelect}
         />
+        <input
+          type="file"
+          ref={csvInputRef}
+          className="hidden"
+          accept="text/csv,.csv"
+          onChange={handleCsvFileSelect}
+        />
 
         {/* Attachment preview chips */}
-        {(attachments.length > 0 || documentName || isUploadingDoc || documentUploadError) && (
+        {(attachments.length > 0 || documentName || csvAttachment || isUploadingDoc || documentUploadError || csvUploadError) && (
           <div className="px-4 pt-2.5 flex flex-wrap gap-2 items-center">
             {documentName && (
               <div className="flex items-center gap-1.5 bg-neutral-900 border border-blue-900/50 text-blue-300 text-xs pl-2.5 pr-1.5 py-1 rounded-full">
@@ -166,6 +202,21 @@ export function ChatComposer({
                 )}
               </div>
             )}
+            {csvAttachment && (
+              <div className="flex items-center gap-1.5 bg-neutral-900 border border-emerald-800/60 text-emerald-300 text-xs pl-2.5 pr-1.5 py-1 rounded-full">
+                <Table2 className="w-3.5 h-3.5" />
+                <span className="truncate max-w-[160px]">{csvAttachment.filename}</span>
+                <button
+                  type="button"
+                  onClick={() => setCsvAttachment(null)}
+                  className="hover:text-red-400 ml-0.5"
+                  title="Remove CSV attachment"
+                  aria-label="Remove CSV attachment"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            )}
             {isUploadingDoc && (
               <div className="flex items-center gap-1.5 bg-neutral-900 border border-amber-900/50 text-amber-300 text-xs px-2.5 py-1 rounded-full animate-pulse">
                 <span>Indexing PDF...</span>
@@ -175,6 +226,12 @@ export function ChatComposer({
               <div className="flex items-center gap-1.5 bg-red-950/40 border border-red-800/60 text-red-200 text-xs px-2.5 py-1 rounded-full" role="alert">
                 <span>{documentUploadError}</span>
                 <button type="button" onClick={() => setDocumentUploadError(null)} className="hover:text-white" aria-label="Dismiss document upload error"><X className="w-3 h-3" /></button>
+              </div>
+            )}
+            {csvUploadError && (
+              <div className="flex items-center gap-1.5 bg-red-950/40 border border-red-800/60 text-red-200 text-xs px-2.5 py-1 rounded-full" role="alert">
+                <span>{csvUploadError}</span>
+                <button type="button" onClick={() => setCsvUploadError(null)} className="hover:text-white" aria-label="Dismiss CSV upload error"><X className="w-3 h-3" /></button>
               </div>
             )}
             {attachments.map((att, idx) => (
@@ -226,6 +283,18 @@ export function ChatComposer({
                 type="button"
                 variant="ghost"
                 size="icon"
+                className="h-8 w-8 text-neutral-400 hover:text-emerald-400"
+                onClick={() => csvInputRef.current?.click()}
+                disabled={isLoading}
+                title="Attach CSV Dataset"
+                aria-label="Attach CSV Dataset"
+              >
+                <Table2 className="w-4 h-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
                 className="h-8 w-8 text-neutral-400 hover:text-neutral-200"
                 onClick={() => imageInputRef.current?.click()}
                 title="Attach Image"
@@ -251,7 +320,7 @@ export function ChatComposer({
                 type="button"
                 size="icon"
                 className="send-button h-9 w-9"
-                disabled={!value.trim() && !attachments.length}
+                disabled={!value.trim() && !attachments.length && !csvAttachment}
                 onClick={handleSubmit}
                 aria-label="Send message"
               >

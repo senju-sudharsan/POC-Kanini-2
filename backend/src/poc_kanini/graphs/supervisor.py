@@ -65,11 +65,18 @@ class SupervisorRouter:
 
         has_docs = bool(state.get("document_ids"))
 
-        # 3. Fast keyword fallback check before LLM call if API key is unconfigured
+        # 3. Route only high-confidence intents locally.  This keeps routine
+        # requests from consuming a generative request while leaving Gemini as
+        # the decision maker for genuinely ambiguous conversation.
+        deterministic_decision = self._deterministic_route(user_query, has_documents=has_docs)
+        if deterministic_decision:
+            return deterministic_decision
+
+        # 4. Fast keyword fallback check before LLM call if API key is unconfigured
         if not self._settings.gemini_api_key:
             return self._heuristic_route(user_query, has_documents=has_docs)
 
-        # 4. LLM structured classification via Gemini
+        # 5. LLM structured classification via Gemini for ambiguous requests.
         try:
             client = genai.Client(api_key=self._settings.gemini_api_key)
             doc_context = ""
@@ -96,6 +103,46 @@ class SupervisorRouter:
         except Exception:
             logger.warning("Supervisor LLM routing unavailable; falling back to heuristic routing.")
             return self._heuristic_route(user_query, has_documents=has_docs)
+
+    def _deterministic_route(self, query: str, has_documents: bool = False) -> RouteDecision | None:
+        """Return a route for unambiguous intents, otherwise defer to Gemini.
+
+        This deliberately uses a smaller set of cues than ``_heuristic_route``:
+        an attached document alone is not enough to make an unrelated question
+        a RAG question.
+        """
+        q = query.lower().strip()
+        # Defer to Gemini/heuristic if the request combines multiple specialists (e.g., Data + ML)
+        has_data = any(w in q for w in ("profile", "dataset", "columns", "csv", "tabular"))
+        has_ml = any(w in q for w in ("train", "model", "classifier", "regressor", "accuracy", "predict"))
+        if has_data and has_ml:
+            return None
+
+        if any(q.startswith(greeting) for greeting in (
+            "hello", "hi", "hey", "how are you", "good morning", "good afternoon", "good evening",
+        )):
+            return RouteDecision(route="general", reason="Deterministic conversational greeting", confidence=1.0)
+        if any(phrase in q for phrase in ("what can you do", "what do you do", "your capabilities")):
+            return RouteDecision(route="general", reason="Deterministic capability request", confidence=1.0)
+        if any(phrase in q for phrase in (
+            "profile this dataset", "profile the dataset", "what columns", "show columns", "inspect this csv",
+        )):
+            return RouteDecision(route="data", reason="Deterministic dataset request", confidence=1.0)
+        if any(phrase in q for phrase in (
+            "train a model", "train the model", "train a classifier", "train a regressor", "model accuracy",
+        )) or re.search(r"\bpredict\b", q):
+            return RouteDecision(route="ml", reason="Deterministic machine-learning request", confidence=1.0)
+        if any(phrase in q for phrase in (
+            "analyze this image", "analyse this image", "analyze the image", "analyse the image",
+        )):
+            return RouteDecision(route="multimodal", reason="Deterministic image-analysis request", confidence=1.0)
+        if has_documents and (
+            re.search(r"\b(?:this|that|the|attached|uploaded)\s+(?:document|pdf|file|person|individual|guy|record)\b", q)
+            or re.search(r"\b(?:according to|in)\s+(?:the\s+)?(?:document|pdf|file)\b", q)
+            or "what does it say" in q
+        ):
+            return RouteDecision(route="rag", reason="Deterministic attached-document reference", confidence=1.0)
+        return None
 
     def _heuristic_route(self, query: str, has_documents: bool = False) -> RouteDecision:
         """Deterministic keyword classification fallback."""

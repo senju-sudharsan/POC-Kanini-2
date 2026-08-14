@@ -7,7 +7,7 @@ import { ChatMessagesView, type ExtendedChatMessage } from "@/components/ChatMes
 import { Topbar } from "@/components/Topbar";
 import { WelcomeScreen } from "@/components/WelcomeScreen";
 import { Button } from "@/components/ui/button";
-import { sendChat, type ImageAttachment, type SynthesisStatus } from "@/lib/chat";
+import { sendChat, type CsvAttachment, type ImageAttachment, type SynthesisStatus } from "@/lib/chat";
 
 export default function App() {
   const [messages, setMessages] = useState<ExtendedChatMessage[]>([]);
@@ -21,10 +21,21 @@ export default function App() {
   const [documentName, setDocumentName] = useState<string | null>(null);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] = useState<{ approvalId: string; reason: string } | null>(null);
-  const [geminiRequestCount, setGeminiRequestCount] = useState(0);
+  const [geminiRequestCount, setGeminiRequestCount] = useState<number>(() => {
+    const saved = localStorage.getItem("aura_request_count");
+    if (saved) {
+      const parsed = parseInt(saved, 10);
+      return isNaN(parsed) ? 0 : parsed;
+    }
+    return 0;
+  });
   const [lastSynthesisStatus, setLastSynthesisStatus] = useState<SynthesisStatus | undefined>();
   const controllerRef = useRef<AbortController | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    localStorage.setItem("aura_request_count", String(geminiRequestCount));
+  }, [geminiRequestCount]);
 
   useEffect(() => {
     const viewport = scrollAreaRef.current?.querySelector("[data-radix-scroll-area-viewport]");
@@ -51,7 +62,7 @@ export default function App() {
   const auraState = computeAuraState();
 
   const submit = useCallback(
-    async (value: string, attachments?: ImageAttachment[], approvalDecision?: "approved" | "rejected") => {
+    async (value: string, attachments?: ImageAttachment[], csvAtt?: CsvAttachment, approvalDecision?: "approved" | "rejected") => {
       const userMessage: ExtendedChatMessage = {
         role: "user",
         content: approvalDecision ? `[Decision: ${approvalDecision.toUpperCase()}] ${value}` : value,
@@ -64,11 +75,15 @@ export default function App() {
         {
           title: attachments?.length
             ? "Multimodal Vision"
+            : csvAtt
+            ? "Dataset Profiling"
             : documentId
             ? "Document RAG Evidence"
             : "General Conversation",
           data: attachments?.length
             ? `Analyzing ${attachments.length} image attachment(s).`
+            : csvAtt
+            ? `Profiling dataset: ${csvAtt.filename}.`
             : documentId
             ? `Searching indexed document evidence (${documentName || documentId}).`
             : "Synthesizing executive response.",
@@ -90,7 +105,8 @@ export default function App() {
           approvalDecision,
           controller.signal,
           documentId,
-          attachments
+          attachments,
+          csvAtt?.data ?? null
         );
 
         setThreadId(res.thread_id);
@@ -129,7 +145,7 @@ export default function App() {
   );
 
   const handleApprovalSubmit = (decision: "approved" | "rejected") => {
-    submit(decision === "approved" ? "Proceed with approved operation." : "Cancel rejected operation.", undefined, decision);
+    submit(decision === "approved" ? "Proceed with approved operation." : "Cancel rejected operation.", undefined, undefined, decision);
   };
 
   const handleDocumentIndexed = (docId: string, filename?: string) => {
@@ -204,7 +220,7 @@ export default function App() {
       </main>
 
       <ChatComposer
-        onSubmit={(val, atts) => submit(val, atts)}
+        onSubmit={(val, atts, csvAtt) => submit(val, atts, csvAtt)}
         onCancel={cancel}
         isLoading={isLoading}
         onFocusChange={setIsFocused}

@@ -12,9 +12,11 @@ class DatasetProfile(BaseModel):
     missing_counts: dict[str, int] = Field(..., description="Count of missing values per column")
     numeric_columns: list[str] = Field(..., description="Columns detected as numeric")
     categorical_columns: list[str] = Field(..., description="Columns detected as categorical")
+    datetime_columns: list[str] = Field(default_factory=list, description="Columns detected as datetime/timestamp")
     summary_statistics: dict[str, dict[str, float]] = Field(
         ..., description="Descriptive statistics for numeric columns (mean, std, min, 25%, 50%, 75%, max)"
     )
+
 
 
 class PreprocessingSummary(BaseModel):

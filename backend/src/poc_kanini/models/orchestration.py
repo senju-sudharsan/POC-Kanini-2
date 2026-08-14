@@ -99,3 +99,6 @@ class AgentConversationState(TypedDict, total=False):
 
     # Thread/session tracking
     thread_id: str
+
+    # Optional raw CSV file content for dataset profiling (sent from frontend attachment)
+    csv_data: str | None

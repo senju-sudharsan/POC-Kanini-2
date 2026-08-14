@@ -11,10 +11,16 @@ def processor() -> NlpProcessor:
     return NlpProcessor(extra_stopwords={"kanini"})
 
 
-def test_reads_utf8_sig_text_file(tmp_path: Path) -> None:
-    source = tmp_path / "sample.txt"
-    source.write_bytes("Résumé for Kanini".encode("utf-8-sig"))
-    assert TextFileReader.read(source) == "Résumé for Kanini"
+def test_reads_utf8_sig_text_file() -> None:
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as fh:
+        fh.write("Résumé for Kanini".encode("utf-8-sig"))
+        tmp_file = Path(fh.name)
+    try:
+        assert TextFileReader.read(tmp_file) == "Résumé for Kanini"
+    finally:
+        tmp_file.unlink(missing_ok=True)
+
 
 
 def test_normalizes_unicode_case_and_whitespace(processor: NlpProcessor) -> None:
