@@ -1389,3 +1389,207 @@ def test_synthesis_provider_failure_returns_fallback_with_warning_and_status():
     assert result["warnings"] == ["Gemini usage limit reached. Please wait for the quota to reset or configure another Gemini API key/project."]
     assert "Revenue increased 18% year over year." in result["messages"][-1].content
     assert "secret-value" not in " ".join(result["warnings"])
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Conversational Memory — Name Recognition & Recall
+# ──────────────────────────────────────────────────────────────────────────────
+
+def test_name_statement_is_acknowledged_without_gemini():
+    """Turn 1: 'my name is sudharsan' → AURA acknowledges naturally without Gemini."""
+    from poc_kanini.graphs.specialists import synthesize_node
+
+    state = {
+        "messages": [HumanMessage(content="my name is sudharsan")],
+        "tool_results": [], "activities": [], "warnings": [], "reports": [], "actions": [], "step_count": 1,
+        "route": "general",
+    }
+    with patch("poc_kanini.graphs.specialists.get_settings") as mock_settings:
+        mock_settings.return_value.gemini_api_key = None
+        result = asyncio.run(synthesize_node(state))
+
+    content = result["messages"][-1].content
+    assert "sudharsan" in content.lower()
+    # Must be a natural acknowledgement – not raw "Based on our conversation context"
+    assert "Based on our conversation context" not in content
+    # Must not expose internal machinery
+    assert "Re:" not in content
+
+
+def test_name_recall_after_statement_without_gemini():
+    """Turn 2: After stating name, 'do you know my name?' → AURA recalls it."""
+    from langchain_core.messages import AIMessage
+    from poc_kanini.graphs.specialists import synthesize_node
+
+    state = {
+        "messages": [
+            HumanMessage(content="my name is sudharsan"),
+            AIMessage(content="Got it, Sudharsan."),
+            HumanMessage(content="do you know my name?"),
+        ],
+        "tool_results": [], "activities": [], "warnings": [], "reports": [], "actions": [], "step_count": 2,
+        "route": "general",
+    }
+    with patch("poc_kanini.graphs.specialists.get_settings") as mock_settings:
+        mock_settings.return_value.gemini_api_key = None
+        result = asyncio.run(synthesize_node(state))
+
+    content = result["messages"][-1].content
+    assert "sudharsan" in content.lower()
+    # Must confirm the name, not just say 'I can help'
+    assert "Based on our conversation context" not in content
+    assert "Re:" not in content
+
+
+def test_name_not_fabricated_if_not_stated():
+    """If user asks 'do you know my name?' without having stated it, AURA says it doesn't know."""
+    from poc_kanini.graphs.specialists import synthesize_node
+
+    state = {
+        "messages": [HumanMessage(content="do you know my name?")],
+        "tool_results": [], "activities": [], "warnings": [], "reports": [], "actions": [], "step_count": 1,
+        "route": "general",
+    }
+    with patch("poc_kanini.graphs.specialists.get_settings") as mock_settings:
+        mock_settings.return_value.gemini_api_key = None
+        result = asyncio.run(synthesize_node(state))
+
+    content = result["messages"][-1].content
+    # Should not invent a name
+    assert "sudharsan" not in content.lower()
+    # Should say it doesn't know
+    assert any(phrase in content.lower() for phrase in ["don't know", "haven't told", "not told", "no name", "i don't know"])
+    assert "Based on our conversation context" not in content
+
+
+def test_name_statement_does_not_confuse_current_message_with_prior_question():
+    """
+    Regression: Prior user message was 'do u know my name?'.
+    Current message is 'my name is sudharsan'.
+    AURA must respond to the CURRENT message, not repeat/echo the prior question.
+    """
+    from langchain_core.messages import AIMessage
+    from poc_kanini.graphs.specialists import synthesize_node
+
+    state = {
+        "messages": [
+            HumanMessage(content="do u know my name?"),
+            AIMessage(content="I don't know your name yet. You haven't told me your name in this session."),
+            HumanMessage(content="my name is sudharsan"),
+        ],
+        "tool_results": [], "activities": [], "warnings": [], "reports": [], "actions": [], "step_count": 2,
+        "route": "general",
+    }
+    with patch("poc_kanini.graphs.specialists.get_settings") as mock_settings:
+        mock_settings.return_value.gemini_api_key = None
+        result = asyncio.run(synthesize_node(state))
+
+    content = result["messages"][-1].content
+    # Must acknowledge the name
+    assert "sudharsan" in content.lower()
+    # Must NOT echo the prior question or expose raw context
+    assert "do u know my name" not in content.lower()
+    assert "Based on our conversation context" not in content
+    assert "Re:" not in content
+
+
+def test_name_via_api_end_to_end():
+    """Full API: name statement → acknowledgement → name recall across turns."""
+    with TestClient(app) as client:
+        # Turn 1: State name
+        r1 = client.post("/api/chat", json={
+            "messages": [{"role": "user", "content": "my name is sudharsan"}]
+        })
+        assert r1.status_code == 200
+        b1 = r1.json()
+        thread_id = b1["thread_id"]
+        c1 = b1["message"]["content"]
+        assert "sudharsan" in c1.lower()
+        assert "Based on our conversation context" not in c1
+        assert "Re:" not in c1
+
+        # Turn 2: Ask for name recall
+        r2 = client.post("/api/chat", json={
+            "thread_id": thread_id,
+            "messages": [{"role": "user", "content": "do you know my name?"}]
+        })
+        assert r2.status_code == 200
+        b2 = r2.json()
+        c2 = b2["message"]["content"]
+        assert "sudharsan" in c2.lower()
+        assert "Based on our conversation context" not in c2
+
+
+def test_identity_routing_does_not_intercept_project_name_query():
+    """'What is my project name?' must NOT enter name-memory routing.
+    It should fall through to normal heuristic / Gemini routing.
+    """
+    from poc_kanini.graphs.supervisor import SupervisorRouter
+
+    supervisor = SupervisorRouter()
+    q = "what is my project name?"
+    result = supervisor._deterministic_route(q, has_documents=False)
+    # Must NOT be routed to general via the identity reason
+    if result is not None and result.route == "general":
+        assert "identity" not in result.reason.lower(), \
+            f"'{q}' was incorrectly intercepted by identity routing: {result}"
+
+
+def test_identity_routing_does_not_intercept_dataset_name_query():
+    """'What is the dataset name?' must NOT enter name-memory routing."""
+    from poc_kanini.graphs.supervisor import SupervisorRouter
+
+    supervisor = SupervisorRouter()
+    q = "what is the dataset name?"
+    result = supervisor._deterministic_route(q, has_documents=False)
+    if result is not None and result.route == "general":
+        assert "identity" not in result.reason.lower(), \
+            f"'{q}' was incorrectly intercepted by identity routing: {result}"
+
+
+def test_identity_routing_does_not_intercept_file_name_query():
+    """'What is the file name?' must NOT enter name-memory routing."""
+    from poc_kanini.graphs.supervisor import SupervisorRouter
+
+    supervisor = SupervisorRouter()
+    for q in ["what is the file name?", "what is the document name?", "what is the column name?"]:
+        result = supervisor._deterministic_route(q, has_documents=False)
+        if result is not None and result.route == "general":
+            assert "identity" not in result.reason.lower(), \
+                f"'{q}' was incorrectly intercepted by identity routing: {result}"
+
+
+def test_identity_routing_correctly_intercepts_name_statements():
+    """Explicit name statements MUST be intercepted by identity routing."""
+    from poc_kanini.graphs.supervisor import SupervisorRouter
+
+    supervisor = SupervisorRouter()
+    identity_queries = [
+        "my name is sudharsan",
+        "i am sudharsan",
+        "call me sudharsan",
+    ]
+    for q in identity_queries:
+        result = supervisor._deterministic_route(q, has_documents=False)
+        assert result is not None and result.route == "general", \
+            f"Identity statement '{q}' was NOT intercepted by identity routing: {result}"
+
+
+def test_identity_routing_correctly_intercepts_name_recall_queries():
+    """Name recall questions MUST be intercepted by identity routing."""
+    from poc_kanini.graphs.supervisor import SupervisorRouter
+
+    supervisor = SupervisorRouter()
+    recall_queries = [
+        "do you know my name?",
+        "what is my name?",
+        "what's my name?",
+        "who am i?",
+    ]
+    for q in recall_queries:
+        result = supervisor._deterministic_route(q, has_documents=False)
+        assert result is not None and result.route == "general", \
+            f"Name recall query '{q}' was NOT intercepted by identity routing: {result}"
+
+
+

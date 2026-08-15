@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import type { ProcessedEvent } from "@/components/ActivityTimeline";
 import { ToolResultCard } from "@/components/ToolResultCard";
 import { ReportCard } from "@/components/ReportCard";
+import { ApprovalCard } from "@/components/ApprovalCard";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { ChatMessage, Citation, ToolResult, ReportPayload, ImageAttachment, SynthesisStatus } from "@/lib/chat";
@@ -16,6 +17,11 @@ export interface ExtendedChatMessage extends ChatMessage {
   synthesisStatus?: SynthesisStatus;
   reports?: ReportPayload[];
   attachments?: ImageAttachment[];
+  approvalRequired?: boolean;
+  approvalId?: string;
+  approvalReason?: string;
+  operation?: string;
+  approvalDecision?: "approved" | "rejected";
 }
 
 interface Props {
@@ -24,6 +30,12 @@ interface Props {
   scrollAreaRef: React.RefObject<HTMLDivElement | null>;
   liveActivityEvents: ProcessedEvent[];
   historicalActivities: Record<string, ProcessedEvent[]>;
+  pendingApproval?: {
+    approvalId: string;
+    reason: string;
+    operation?: string;
+  } | null;
+  onApprovalDecision?: (decision: "approved" | "rejected") => void;
 }
 
 // Convert technical graph node names to friendly human-readable phrases
@@ -46,6 +58,8 @@ export function ChatMessagesView({
   scrollAreaRef,
   liveActivityEvents,
   historicalActivities,
+  pendingApproval,
+  onApprovalDecision,
 }: Props) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -112,6 +126,15 @@ export function ChatMessagesView({
                 <ReactMarkdown>{message.content}</ReactMarkdown>
               </div>
 
+              {message.approvalDecision && (
+                <ApprovalCard
+                  reason={message.approvalReason || "Controlled operation"}
+                  approvalId={message.approvalId}
+                  operation={message.operation}
+                  decision={message.approvalDecision}
+                />
+              )}
+
               <ToolResultCard
                 citations={message.citations}
                 toolResults={message.toolResults}
@@ -133,6 +156,18 @@ export function ChatMessagesView({
             </article>
           );
         })}
+
+        {pendingApproval && (
+          <div className="mt-2">
+            <ApprovalCard
+              reason={pendingApproval.reason}
+              approvalId={pendingApproval.approvalId}
+              operation={pendingApproval.operation}
+              isLoading={isLoading}
+              onDecision={onApprovalDecision}
+            />
+          </div>
+        )}
 
         {isLoading && messages.at(-1)?.role === "user" && (
           <article className="assistant-turn animate-pulse">

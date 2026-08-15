@@ -30,6 +30,15 @@ class ChatRequest(BaseModel):
 
 
 
+class ApprovalDecisionRequest(BaseModel):
+    """Explicit request body for approving or rejecting a pending controlled operation."""
+
+    thread_id: str = Field(description="Thread ID associated with the pending approval checkpoint")
+    decision: str = Field(pattern="^(approved|rejected)$", description="Approval decision: 'approved' or 'rejected'")
+    approval_id: str | None = Field(default=None, description="Optional approval ID matching the pending request")
+    message: str | None = Field(default=None, description="Optional explanation or message accompanying the decision")
+
+
 class ChatResponse(BaseModel):
     """Phase 8 unified chat response returning message, thread_id, activities, citations, tool_results, reports, actions, and approval request."""
 
@@ -38,6 +47,7 @@ class ChatResponse(BaseModel):
     approval_required: bool = Field(default=False, description="True if graph execution was interrupted awaiting human approval")
     approval_id: str | None = Field(default=None, description="Unique identifier for the approval request")
     approval_reason: str | None = Field(default=None, description="Human-readable explanation of why approval is required")
+    operation: str | None = Field(default=None, description="The controlled operation name (e.g., 'ml') requiring approval")
     activities: list[ActivityEvent] = Field(default_factory=list, description="Activities emitted during execution")
     citations: list[dict] = Field(default_factory=list, description="Citations generated during evidence retrieval")
     tool_results: list[dict] = Field(default_factory=list, description="Structured tool outputs emitted by specialist nodes")

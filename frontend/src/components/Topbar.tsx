@@ -21,12 +21,6 @@ export function Topbar({
   return (
     <header className="topbar">
       <div className="brand">
-        <div className="brand-mark">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="9" />
-            <circle cx="12" cy="12" r="4" />
-          </svg>
-        </div>
         <span>AURA</span>
       </div>
 

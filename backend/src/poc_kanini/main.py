@@ -15,7 +15,7 @@ from poc_kanini.core.config import get_settings
 from poc_kanini.documents.processor import DocumentProcessor, DocumentValidationError
 from poc_kanini.graphs.chat import chat_graph, hybrid_chat_graph
 from poc_kanini.models.actions import ActionRequest, ActionResult, ReportPayload
-from poc_kanini.models.chat import ChatMessage, ChatRequest, ChatResponse
+from poc_kanini.models.chat import ApprovalDecisionRequest, ChatMessage, ChatRequest, ChatResponse
 from poc_kanini.models.documents import ProcessedDocument
 from poc_kanini.multimodal.models import MultimodalAnalysis
 from poc_kanini.multimodal.service import MultimodalService
@@ -131,6 +131,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
     """Run stateful conversation through the AURA LangGraph hybrid agent."""
 
     thread_id = request.thread_id or f"thread_{uuid.uuid4().hex[:8]}"
+    turn_id = f"turn_{uuid.uuid4().hex[:8]}"
     messages = [
         HumanMessage(content=item.content) if item.role == "user" else AIMessage(content=item.content)
         for item in request.messages
@@ -143,6 +144,8 @@ async def chat(request: ChatRequest) -> ChatResponse:
         "step_count": 0,
         "max_steps": 5,
         "thread_id": thread_id,
+        "turn_id": turn_id,
+        "approval_status": request.approval,
     }
 
     if "document_id" in request.model_fields_set or "document_ids" in request.model_fields_set:
@@ -150,10 +153,12 @@ async def chat(request: ChatRequest) -> ChatResponse:
         if request.document_id and request.document_id not in doc_ids:
             doc_ids.insert(0, request.document_id)
         input_state["document_ids"] = doc_ids
+    elif not request.document_ids and not request.document_id:
+        # Explicit empty document association for this turn
+        input_state["document_ids"] = []
+
     if request.csv_data is not None:
         input_state["csv_data"] = request.csv_data
-    if request.approval:
-        input_state["approval_status"] = request.approval
 
     config = {"configurable": {"thread_id": thread_id}}
 
@@ -175,6 +180,11 @@ async def chat(request: ChatRequest) -> ChatResponse:
     appr_required = bool(result.get("approval_required", False))
     appr_id = result.get("approval_id")
     appr_reason = result.get("approval_reason")
+    operation = result.get("operation") or (result.get("route") if appr_required else None)
+
+    from poc_kanini.graphs.turn_context import get_current_turn_tools
+
+    current_tools = get_current_turn_tools(result)
 
     return ChatResponse(
         message=ChatMessage(role="assistant", content=final_content),
@@ -182,14 +192,32 @@ async def chat(request: ChatRequest) -> ChatResponse:
         approval_required=appr_required,
         approval_id=appr_id,
         approval_reason=appr_reason,
+        operation=operation,
         activities=activities,
         citations=result.get("citations") or [],
-        tool_results=result.get("tool_results") or [],
+        tool_results=current_tools,
         warnings=result.get("warnings") or [],
         synthesis_status=result.get("synthesis_status") or "success",
         reports=result.get("reports") or [],
         actions=result.get("actions") or [],
     )
+
+
+@app.post("/api/chat/approval", response_model=ChatResponse)
+async def chat_approval(request: ApprovalDecisionRequest) -> ChatResponse:
+    """Submit an explicit human approval or rejection decision for a pending controlled operation."""
+
+    default_msg = (
+        "Proceed with approved operation."
+        if request.decision == "approved"
+        else "Cancel rejected operation."
+    )
+    chat_request = ChatRequest(
+        thread_id=request.thread_id,
+        approval=request.decision,
+        messages=[ChatMessage(role="user", content=request.message or default_msg)],
+    )
+    return await chat(chat_request)
 
 
 @app.post("/api/reports/generate", response_model=ReportPayload)

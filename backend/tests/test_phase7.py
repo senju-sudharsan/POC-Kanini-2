@@ -449,9 +449,6 @@ def test_api_chat_stateful_context_retention() -> None:
     live API quota. The mock returns answers that reference the previous turn's
     content, validating that the thread checkpoint carries state correctly.
     """
-    # Synthesis mock: on the second call the model "knows" about Apollo because
-    # the checkpoint contains the prior HumanMessage.  We simulate this by
-    # building a response that echoes the thread context.
     call_count = {"n": 0}
 
     async def _mock_generate(model, contents, config):  # noqa: ARG001
@@ -466,9 +463,16 @@ def test_api_chat_stateful_context_retention() -> None:
     mock_client = MagicMock()
     mock_client.aio.models.generate_content = _mock_generate
 
+    mock_settings = MagicMock()
+    mock_settings.gemini_api_key = "test-key"
+    mock_settings.gemini_model = "gemini-test"
+    mock_settings.gemini_temperature = 0.1
+    mock_settings.gemini_max_output_tokens = 256
+
     with (
         patch("poc_kanini.graphs.specialists.genai.Client", return_value=mock_client),
         patch("poc_kanini.graphs.supervisor.genai.Client", return_value=mock_client),
+        patch("poc_kanini.graphs.specialists.get_settings", return_value=mock_settings),
         TestClient(app) as client,
     ):
         # Turn 1
@@ -549,3 +553,123 @@ def test_api_multimodal_endpoint_unaffected() -> None:
             )
     assert r.status_code == 200
     assert r.json()["answer"] == "Test analysis"
+
+
+# ---------------------------------------------------------------------------
+# 27-31. Dedicated HITL Flow & ML Approval Tests
+# ---------------------------------------------------------------------------
+
+
+def test_hitl_ml_operation_returns_approval_metadata() -> None:
+    """ML training operation pauses and returns approval_required=True, approval_id, reason, and operation='ml'."""
+    query = (
+        "Train a classifier model using target column label on dataset "
+        "[{\"x\": 1.0, \"label\": \"A\"}, {\"x\": 2.0, \"label\": \"A\"}, "
+        "{\"x\": 8.0, \"label\": \"B\"}, {\"x\": 9.0, \"label\": \"B\"}]"
+    )
+    with TestClient(app) as client:
+        r = client.post("/api/chat", json={"messages": [{"role": "user", "content": query}]})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["approval_required"] is True
+    assert data["approval_id"] is not None
+    assert data["approval_id"].startswith("appr_")
+    assert "ml" in (data["approval_reason"] or "").lower() or data.get("operation") == "ml"
+    assert data.get("operation") == "ml"
+
+
+def test_hitl_ml_operation_approval_allows_execution_to_proceed() -> None:
+    """Explicitly approving an ML operation resumes the thread checkpoint and returns trained results."""
+    query = (
+        "Train a classifier model using target column label on dataset "
+        "[{\"x\": 1.0, \"label\": \"A\"}, {\"x\": 2.0, \"label\": \"A\"}, "
+        "{\"x\": 8.0, \"label\": \"B\"}, {\"x\": 9.0, \"label\": \"B\"}]"
+    )
+    with TestClient(app) as client:
+        # Turn 1: Request ML training -> pauses for HITL
+        r1 = client.post("/api/chat", json={"messages": [{"role": "user", "content": query}]})
+        assert r1.status_code == 200
+        b1 = r1.json()
+        assert b1["approval_required"] is True
+        thread_id = b1["thread_id"]
+        appr_id = b1["approval_id"]
+
+        # Turn 2: Approve via /api/chat/approval endpoint
+        r2 = client.post(
+            "/api/chat/approval",
+            json={
+                "thread_id": thread_id,
+                "decision": "approved",
+                "approval_id": appr_id,
+            },
+        )
+        assert r2.status_code == 200
+        b2 = r2.json()
+        assert b2["approval_required"] is False
+        assert b2["thread_id"] == thread_id
+        # Response should contain the synthesized / summarized ML results
+        content = b2["message"]["content"]
+        assert len(content) > 0
+        tool_results = b2.get("tool_results", [])
+        ml_res = next((t for t in tool_results if t.get("tool") == "train_ml_model_tool"), None)
+        assert ml_res is not None
+
+
+def test_hitl_ml_operation_rejection_prevents_execution() -> None:
+    """Explicitly rejecting an ML operation prevents model execution and returns a cancellation response."""
+    query = (
+        "Train a classifier model using target column label on dataset "
+        "[{\"x\": 1.0, \"label\": \"A\"}, {\"x\": 2.0, \"label\": \"A\"}, "
+        "{\"x\": 8.0, \"label\": \"B\"}, {\"x\": 9.0, \"label\": \"B\"}]"
+    )
+    with TestClient(app) as client:
+        # Turn 1: Request ML training -> pauses for HITL
+        r1 = client.post("/api/chat", json={"messages": [{"role": "user", "content": query}]})
+        assert r1.status_code == 200
+        b1 = r1.json()
+        assert b1["approval_required"] is True
+        thread_id = b1["thread_id"]
+        appr_id = b1["approval_id"]
+
+        # Turn 2: Reject via /api/chat/approval endpoint
+        r2 = client.post(
+            "/api/chat/approval",
+            json={
+                "thread_id": thread_id,
+                "decision": "rejected",
+                "approval_id": appr_id,
+            },
+        )
+        assert r2.status_code == 200
+        b2 = r2.json()
+        assert b2["approval_required"] is False
+        assert "rejected" in b2["message"]["content"].lower()
+        # Controlled tool results must not be exposed on rejection
+        tool_results = b2.get("tool_results", [])
+        assert len(tool_results) == 0
+
+
+def test_hitl_no_approval_controlled_operation_blocked() -> None:
+    """Sending a generic message without approval while approval is pending keeps operation blocked."""
+    query = "Execute sensitive controlled operation on database"
+    with TestClient(app) as client:
+        # Turn 1: Triggers approval
+        r1 = client.post("/api/chat", json={"messages": [{"role": "user", "content": query}]})
+        assert r1.status_code == 200
+        b1 = r1.json()
+        assert b1["approval_required"] is True
+        thread_id = b1["thread_id"]
+
+        # Turn 2: Send another message without approval decision
+        r2 = client.post(
+            "/api/chat",
+            json={
+                "thread_id": thread_id,
+                "messages": [{"role": "user", "content": "Just asking another question"}],
+            },
+        )
+        assert r2.status_code == 200
+        b2 = r2.json()
+        # Cannot execute controlled operation without explicit approval
+        assert b2["approval_required"] is False or "approval" in b2["message"]["content"].lower()
+

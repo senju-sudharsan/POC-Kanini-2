@@ -56,8 +56,9 @@ def route_reflection_decision(state: AgentConversationState) -> str:
     # 3. Cross-Specialist Routing (Data -> ML)
     route = state.get("route", "")
     if route == "ml":
-        tool_results = state.get("tool_results") or []
-        ml_tool_run = any(item.get("tool") in ("train_ml_model_tool", "predict_ml_model_tool") for item in tool_results)
+        from poc_kanini.graphs.turn_context import get_current_turn_tools
+        current_tools = get_current_turn_tools(state)
+        ml_tool_run = any(item.get("tool") in ("train_ml_model_tool", "predict_ml_model_tool") for item in current_tools)
         if not ml_tool_run:
             return "ml_agent"
 

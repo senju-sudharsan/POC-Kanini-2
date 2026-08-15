@@ -85,6 +85,7 @@ class AgentConversationState(TypedDict, total=False):
     approval_id: str | None
     approval_reason: str | None
     approval_status: str | None  # "pending", "approved", "rejected"
+    operation: str | None
 
     # Error tracking
     error: str | None
@@ -99,6 +100,10 @@ class AgentConversationState(TypedDict, total=False):
 
     # Thread/session tracking
     thread_id: str
+    turn_id: str | None
 
     # Optional raw CSV file content for dataset profiling (sent from frontend attachment)
     csv_data: str | None
+
+    # Cached trained model identifier for subsequent predictions within this conversation thread
+    model_id: str | None

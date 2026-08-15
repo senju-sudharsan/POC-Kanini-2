@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ProcessedEvent } from "@/components/ActivityTimeline";
 import type { AuraState } from "@/components/AuraOrb";
-import { ApprovalCard } from "@/components/ApprovalCard";
 import { ChatComposer } from "@/components/ChatComposer";
 import { ChatMessagesView, type ExtendedChatMessage } from "@/components/ChatMessagesView";
 import { Topbar } from "@/components/Topbar";
@@ -20,7 +19,7 @@ export default function App() {
   const [documentId, setDocumentId] = useState<string | null>(null);
   const [documentName, setDocumentName] = useState<string | null>(null);
   const [threadId, setThreadId] = useState<string | null>(null);
-  const [pendingApproval, setPendingApproval] = useState<{ approvalId: string; reason: string } | null>(null);
+  const [pendingApproval, setPendingApproval] = useState<{ approvalId: string; reason: string; operation?: string } | null>(null);
   const [geminiRequestCount, setGeminiRequestCount] = useState<number>(() => {
     const saved = localStorage.getItem("aura_request_count");
     if (saved) {
@@ -40,7 +39,7 @@ export default function App() {
   useEffect(() => {
     const viewport = scrollAreaRef.current?.querySelector("[data-radix-scroll-area-viewport]");
     if (viewport) viewport.scrollTop = viewport.scrollHeight;
-  }, [messages]);
+  }, [messages, pendingApproval]);
 
   // Compute dynamic AuraOrb state based on real application lifecycle
   const computeAuraState = (): AuraState => {
@@ -120,6 +119,11 @@ export default function App() {
           warnings: res.warnings,
           synthesisStatus: res.synthesis_status,
           reports: res.reports,
+          approvalRequired: res.approval_required,
+          approvalId: res.approval_id || undefined,
+          approvalReason: res.approval_reason || undefined,
+          operation: res.operation || undefined,
+          approvalDecision: approvalDecision || undefined,
         };
 
         setMessages((current) => [...current, assistantMsg]);
@@ -130,6 +134,7 @@ export default function App() {
           setPendingApproval({
             approvalId: res.approval_id,
             reason: res.approval_reason || "Human authorization required before proceeding.",
+            operation: res.operation || "ml",
           });
         }
       } catch (requestError) {
@@ -145,7 +150,12 @@ export default function App() {
   );
 
   const handleApprovalSubmit = (decision: "approved" | "rejected") => {
-    submit(decision === "approved" ? "Proceed with approved operation." : "Cancel rejected operation.", undefined, undefined, decision);
+    submit(
+      decision === "approved" ? "Proceed with approved operation." : "Cancel rejected operation.",
+      undefined,
+      undefined,
+      decision
+    );
   };
 
   const handleDocumentIndexed = (docId: string, filename?: string) => {
@@ -191,15 +201,6 @@ export default function App() {
           </div>
         )}
 
-        {pendingApproval && (
-          <div className="px-4 pt-2">
-            <ApprovalCard
-              reason={pendingApproval.reason}
-              onDecision={handleApprovalSubmit}
-            />
-          </div>
-        )}
-
         {messages.length === 0 ? (
           <WelcomeScreen
             onIndexed={handleDocumentIndexed}
@@ -215,6 +216,8 @@ export default function App() {
             scrollAreaRef={scrollAreaRef}
             liveActivityEvents={liveActivities}
             historicalActivities={history}
+            pendingApproval={pendingApproval}
+            onApprovalDecision={handleApprovalSubmit}
           />
         )}
       </main>

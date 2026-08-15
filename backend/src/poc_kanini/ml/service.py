@@ -47,16 +47,8 @@ class MlService:
 
     def _parse_data(self, data: list[dict[str, Any]] | str) -> pd.DataFrame:
         """Parse input data (JSON records list or CSV text string) into a pandas DataFrame."""
-        if isinstance(data, str):
-            # Parse CSV text string
-            return pd.read_csv(io.StringIO(data))
-        elif isinstance(data, list):
-            # Parse list of JSON records
-            if not data:
-                return pd.DataFrame()
-            return pd.DataFrame(data)
-        else:
-            raise ValueError("Unsupported data input type. Must be a list of records or a CSV string.")
+        from poc_kanini.ml.dataset_parser import parse_data_to_dataframe
+        return parse_data_to_dataframe(data)
 
     def profile(self, data: list[dict[str, Any]] | str) -> DatasetProfile:
         """Parse input data and extract structured dataset characteristics."""

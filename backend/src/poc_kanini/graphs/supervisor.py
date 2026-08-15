@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import uuid
 from typing import Any
 
 from google import genai
@@ -63,11 +64,18 @@ class SupervisorRouter:
                 confidence=1.0,
             )
 
+        # Check for explicit approval resumption
+        if state.get("approval_status") == "approved" or user_query.lower().startswith("proceed") or "[decision: approved]" in user_query.lower():
+            op = state.get("operation") or "ml"
+            return RouteDecision(
+                route=op if op in ("ml", "data", "rag", "multimodal") else "ml",
+                reason="Resumed approved operation",
+                confidence=1.0,
+            )
+
         has_docs = bool(state.get("document_ids"))
 
-        # 3. Route only high-confidence intents locally.  This keeps routine
-        # requests from consuming a generative request while leaving Gemini as
-        # the decision maker for genuinely ambiguous conversation.
+        # 3. Route only high-confidence intents locally.
         deterministic_decision = self._deterministic_route(user_query, has_documents=has_docs)
         if deterministic_decision:
             return deterministic_decision
@@ -107,41 +115,85 @@ class SupervisorRouter:
     def _deterministic_route(self, query: str, has_documents: bool = False) -> RouteDecision | None:
         """Return a route for unambiguous intents, otherwise defer to Gemini.
 
-        This deliberately uses a smaller set of cues than ``_heuristic_route``:
-        an attached document alone is not enough to make an unrelated question
-        a RAG question.
+        Precedence:
+        1. Explicit image analysis -> multimodal
+        2. Explicit controlled ML train / predict intent -> ml
+        3. Explicit dataset profiling / CSV intent -> data
+        4. Explicit document / section reference intent -> rag
+        5. Deterministic conversational / identity intents -> general
+        6. Return None to allow Gemini supervisor routing
         """
         q = query.lower().strip()
+
         # Defer to Gemini/heuristic if the request combines multiple specialists (e.g., Data + ML)
         has_data = any(w in q for w in ("profile", "dataset", "columns", "csv", "tabular"))
         has_ml = any(w in q for w in ("train", "model", "classifier", "regressor", "accuracy", "predict"))
         if has_data and has_ml:
             return None
 
+        # 1. Explicit visual image analysis
+        if any(phrase in q for phrase in (
+            "analyze this image", "analyse this image", "analyze the image", "analyse the image",
+        )):
+            return RouteDecision(route="multimodal", reason="Deterministic image-analysis request", confidence=1.0)
+
+        # 2. Explicit controlled ML train / predict intent
+        if any(phrase in q for phrase in (
+            "train a model", "train the model", "train a classifier", "train a regressor", "model accuracy",
+        )) or re.search(r"\b(?:predict|predictions?|predicting|inference|score sample|evaluate sample)\b", q):
+            return RouteDecision(route="ml", reason="Deterministic machine-learning request", confidence=1.0)
+
+        # 3. Explicit dataset profiling / CSV intent
+        if any(phrase in q for phrase in (
+            "profile this dataset", "profile the dataset", "what columns", "show columns", "inspect this csv",
+        )):
+            return RouteDecision(route="data", reason="Deterministic dataset request", confidence=1.0)
+
+        # 4. Explicit personal facts and conversational identity (runs before document phrase matching)
         if any(q.startswith(greeting) for greeting in (
             "hello", "hi", "hey", "how are you", "good morning", "good afternoon", "good evening",
         )):
             return RouteDecision(route="general", reason="Deterministic conversational greeting", confidence=1.0)
         if any(phrase in q for phrase in ("what can you do", "what do you do", "your capabilities")):
             return RouteDecision(route="general", reason="Deterministic capability request", confidence=1.0)
-        if any(phrase in q for phrase in (
-            "profile this dataset", "profile the dataset", "what columns", "show columns", "inspect this csv",
-        )):
-            return RouteDecision(route="data", reason="Deterministic dataset request", confidence=1.0)
-        if any(phrase in q for phrase in (
-            "train a model", "train the model", "train a classifier", "train a regressor", "model accuracy",
-        )) or re.search(r"\bpredict\b", q):
-            return RouteDecision(route="ml", reason="Deterministic machine-learning request", confidence=1.0)
-        if any(phrase in q for phrase in (
-            "analyze this image", "analyse this image", "analyze the image", "analyse the image",
-        )):
-            return RouteDecision(route="multimodal", reason="Deterministic image-analysis request", confidence=1.0)
+
+        # Dog / pet statements and recall
+        if re.search(r"\b(?:my\s+(?:dog|pet)(?:'s|s)?\s+name\s+is|my\s+(?:dog|pet)\s+is\s+named)\b", q):
+            return RouteDecision(route="general", reason="Deterministic dog/pet name statement", confidence=1.0)
+        if re.search(r"\b(?:what(?:'s|\s+is)|do\s+(?:you|u)\s+know|remember)\s+(?:my\s+)?(?:dog|pet)(?:'s|s)?\s+name\b", q):
+            return RouteDecision(route="general", reason="Deterministic dog/pet name recall", confidence=1.0)
+
+        # Project name statements and recall
+        if re.search(r"\b(?:my\s+project(?:\s+name)?\s+(?:is|is\s+named)|project\s+is\s+named)\b", q):
+            return RouteDecision(route="general", reason="Deterministic project name statement", confidence=1.0)
+        if re.search(r"\b(?:what(?:'s|\s+is)|do\s+(?:you|u)\s+know|remember)\s+(?:my\s+)?project(?:'s)?\s+name\b", q):
+            return RouteDecision(route="general", reason="Deterministic project name recall", confidence=1.0)
+
+        # Personal identity statements and recall
+        if re.search(r"\bmy name is\b|\bcall me\b|\bi am\b(?! sure|\s+not|\s+going|\s+trying|\s+looking|\s+interested|\s+here|\s+ready)|\bi'm\b(?!\s+not\b|\s+just\b|\s+using\b|\s+trying\b|\s+looking\b|\s+going\b|\s+a\b)", q):
+            return RouteDecision(route="general", reason="Deterministic conversational identity statement", confidence=1.0)
+        if re.search(r"\b(?:do\s+you|u)\s+know\s+my\s+name\b|\bwhat(?:'s|\s+is)\s+my\s+name\s*\??\s*$|\bwho\s+am\s+i\s*\??\s*$|\bremember\s+my\s+name\b|\bwhat\s+is\s+your\s+name\b|\bwho\s+are\s+you\b", q):
+            return RouteDecision(route="general", reason="Deterministic conversational identity request", confidence=1.0)
+
+        # 5. Explicit document / curriculum / section reference
         if has_documents and (
-            re.search(r"\b(?:this|that|the|attached|uploaded)\s+(?:document|pdf|file|person|individual|guy|record)\b", q)
-            or re.search(r"\b(?:according to|in)\s+(?:the\s+)?(?:document|pdf|file)\b", q)
-            or "what does it say" in q
+            re.search(r"\b(?:this|that|the|attached|uploaded|given)\s+(?:document|pdf|file|person|individual|guy|record|curriculum|syllabus|handbook|policy|manual|contract|agreement|paper|report|guide|text|material|course|section|chapter|part|topic|module|unit)\b", q)
+            or re.search(r"\b(?:according to|in|from|about)\s+(?:the\s+)?(?:document|pdf|file|curriculum|syllabus|handbook|policy|manual|contract|paper|report|guide|section|chapter)\b", q)
+            or any(phrase in q for phrase in (
+                "what does it say", "list topics", "give me topics", "what are the topics",
+                "what are the sections", "what are the chapters", "from the curriculum", "from the syllabus",
+                "from the given curriculum", "in the curriculum", "in the syllabus", "in the handbook",
+                "in the document", "in the pdf", "give me more", "more topics", "other topics",
+                "additional topics", "next topics", "anything other", "anything else", "other than",
+                "different topics", "remaining topics", "tell me more", "mentioned in that section",
+                "in that section", "in this section", "that section", "this section", "those methods",
+                "those technologies", "those tools", "technologies mentioned", "methods mentioned",
+            ))
+            or re.search(r"\b(?:more|other|additional|next|remaining)\s+(?:topics?|sections?|chapters?|modules?|points?)\b", q)
+            or re.search(r"\b(?:technologies|methods|tools|algorithms|frameworks)\s+(?:mentioned|in|from)\b", q)
         ):
             return RouteDecision(route="rag", reason="Deterministic attached-document reference", confidence=1.0)
+
         return None
 
     def _heuristic_route(self, query: str, has_documents: bool = False) -> RouteDecision:
@@ -149,6 +201,8 @@ class SupervisorRouter:
         q = query.lower().strip()
         if any(q.startswith(w) for w in ["hello", "hi", "hey", "how are you", "good morning", "good evening", "good afternoon"]):
             return RouteDecision(route="general", reason="Conversational greeting", confidence=1.0)
+        if re.search(r"\b(?:dog|pet|project|my\s+name|who\s+am\s+i|your\s+name)\b", q):
+            return RouteDecision(route="general", reason="Conversational personal context", confidence=1.0)
         if any(w in q for w in ["profile", "dataset", "columns", "rows", "csv", "tabular"]):
             return RouteDecision(route="data", reason="Keyword match for Data profiling", confidence=0.8)
         if any(w in q for w in ["train", "predict", "classifier", "regressor", "accuracy", "model"]):
@@ -171,10 +225,12 @@ async def supervisor_node(state: AgentConversationState) -> dict[str, Any]:
     )
     activities = list(state.get("activities") or [])
     activities.append(activity)
+    turn_id = state.get("turn_id") or f"turn_{uuid.uuid4().hex[:8]}"
 
     return {
         "route": decision.route,
         "reason": decision.reason,
         "activities": activities,
+        "turn_id": turn_id,
         "step_count": state.get("step_count", 0) + 1,
     }

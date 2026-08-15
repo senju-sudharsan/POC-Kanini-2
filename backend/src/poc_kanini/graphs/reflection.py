@@ -4,6 +4,7 @@ import logging
 import uuid
 from typing import Any
 
+from poc_kanini.graphs.turn_context import get_current_turn_query, get_current_turn_tools
 from poc_kanini.models.orchestration import (
     ActivityEvent,
     AgentConversationState,
@@ -25,23 +26,20 @@ def _is_non_retryable_provider_error(error: str) -> bool:
 
 def _get_latest_user_text(state: AgentConversationState) -> str:
     """Extract text from the latest user message in state."""
-    messages = state.get("messages") or []
-    for msg in reversed(messages):
-        content = getattr(msg, "content", "")
-        if content and not getattr(msg, "type", "").startswith("ai"):
-            return str(content)
-    return ""
+    return get_current_turn_query(state)
 
 
 async def reflection_node(state: AgentConversationState) -> dict[str, Any]:
     """LangGraph Reflection node evaluating tool quality, error recovery, and HITL boundaries."""
-    tool_results = state.get("tool_results") or []
     activities = list(state.get("activities") or [])
     retry_count = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 1)
     approval_status = state.get("approval_status")
-    user_query = _get_latest_user_text(state)
+    user_query = get_current_turn_query(state)
     query_lower = user_query.lower()
+
+    # Retrieve tool results originating exclusively from this turn
+    current_tools = get_current_turn_tools(state)
 
     # 1. Human-In-The-Loop (HITL) Approval Boundary Check
     # Controlled operations: explicit requests containing approval triggers or sensitive model training
@@ -57,13 +55,15 @@ async def reflection_node(state: AgentConversationState) -> dict[str, Any]:
         ]
     )
 
-    # Check if an ML training operation requires approval and hasn't been approved yet
-    ml_train_run = any(item.get("tool") == "train_ml_model_tool" for item in tool_results)
-    if (is_controlled_op or ml_train_run) and approval_status not in ("approved", "rejected"):
+    ml_train_run = any(item.get("tool") == "train_ml_model_tool" for item in current_tools)
+    is_prediction_run = any(item.get("tool") == "predict_ml_model_tool" for item in current_tools)
+
+    if (is_controlled_op or ml_train_run) and not is_prediction_run and approval_status not in ("approved", "rejected"):
         appr_id = state.get("approval_id") or f"appr_{uuid.uuid4().hex[:8]}"
+        operation_name = "ml" if ml_train_run else (state.get("route") or "controlled_operation")
         appr_reason = (
             f"Human approval is required before completing controlled operation "
-            f"'{state.get('route', 'ml')}' (approval_id: {appr_id})."
+            f"'{operation_name}' (approval_id: {appr_id})."
         )
         activities.append(
             ActivityEvent(
@@ -83,11 +83,12 @@ async def reflection_node(state: AgentConversationState) -> dict[str, Any]:
             "approval_id": appr_id,
             "approval_reason": appr_reason,
             "approval_status": "pending",
+            "operation": operation_name,
             "reflection": reflection,
             "activities": activities,
         }
 
-    # If already approved or rejected, clear approval_required flag
+    # If already approved or rejected, record the decision
     if approval_status in ("approved", "rejected"):
         activities.append(
             ActivityEvent(
@@ -96,9 +97,9 @@ async def reflection_node(state: AgentConversationState) -> dict[str, Any]:
             )
         )
 
-    # 2. Error Recovery & Bounded Retry Check
+    # 2. Error Recovery & Bounded Retry Check on CURRENT-TURN tools
     last_tool_error = None
-    for res in tool_results:
+    for res in current_tools:
         if "error" in res or (isinstance(res.get("result"), dict) and "error" in res["result"]):
             err_dict = res.get("error") or res.get("result", {}).get("error")
             last_tool_error = str(err_dict)

@@ -31,6 +31,7 @@ export type ChatResponse = {
   approval_required?: boolean;
   approval_id?: string | null;
   approval_reason?: string | null;
+  operation?: string | null;
   activities?: ActivityEvent[];
   citations?: Citation[];
   tool_results?: ToolResult[];
@@ -76,6 +77,35 @@ export async function sendChat(
   };
 }
 
+export async function submitApprovalDecision(
+  threadId: string,
+  decision: "approved" | "rejected",
+  approvalId?: string | null,
+  message?: string,
+  signal?: AbortSignal
+): Promise<ChatResponse & { message: ChatMessage }> {
+  const response = await fetch("/api/chat/approval", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      thread_id: threadId,
+      decision,
+      approval_id: approvalId || undefined,
+      message: message || undefined,
+    }),
+    signal,
+  });
+  const body = (await response.json().catch(() => null)) as ChatResponse | { detail?: string } | null;
+  if (!response.ok)
+    throw new Error(body && "detail" in body ? body.detail ?? "Failed to submit approval." : "Failed to submit approval.");
+  if (!body || !("message" in body)) throw new Error("Approval response was invalid.");
+
+  return {
+    ...body,
+    message: { ...body.message, id: crypto.randomUUID() },
+  };
+}
+
 export async function sendDocumentChat(
   question: string,
   documentId: string,
@@ -96,3 +126,4 @@ export async function sendDocumentChat(
     : "";
   return { role: "assistant", content: `${body.answer}${references}`, id: crypto.randomUUID() };
 }
+

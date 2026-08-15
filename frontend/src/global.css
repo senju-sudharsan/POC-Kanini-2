@@ -430,6 +430,36 @@ html, body, #root {
   pointer-events: auto;
 }
 
+/* Approval Card Styles — AURA Neon Purple / Electric Blue Theme */
+.approval-card, .approval {
+  background: radial-gradient(ellipse 90% 60% at 50% 0%, rgba(134, 92, 255, 0.12), transparent 70%), #11131a;
+  border: 1px solid rgba(134, 92, 255, 0.32);
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 16px rgba(77, 141, 255, 0.12);
+  position: relative;
+  overflow: hidden;
+}
+
+.approval-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #4d8dff, #865cff, transparent);
+}
+
+.approval-resolved-card, .approval-resolved {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
 /* Keyframes */
 @keyframes aura-breathe {
   50% { transform: scale(1.16); opacity: 0.78; }
