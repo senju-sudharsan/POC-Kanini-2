@@ -90,11 +90,12 @@ class AgentConversationState(TypedDict, total=False):
     # Error tracking
     error: str | None
 
-    # Phase 8 Extensions: Document association, citations, reports, actions, warnings
+    # Phase 8 Extensions: Document association, citations, reports, actions, warnings, visualizations
     document_ids: list[str]
     citations: list[dict]
     reports: list[dict]
     actions: list[dict]
+    visualizations: list[dict]
     warnings: list[str]
     synthesis_status: str
 

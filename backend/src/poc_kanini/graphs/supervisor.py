@@ -19,7 +19,7 @@ Analyze the user request, any available image attachments, and any active attach
 
 - 'multimodal': The request includes an image attachment, or explicitly asks for visual analysis of an image.
 - 'rag': The user asks for information, policies, or evidence contained in enterprise PDF documents, OR there are active attached documents and the request refers to them (e.g. "what does this document say", "what does this guy specialize at" when a document is attached).
-- 'data': The user asks to profile, inspect, clean, or summarize a tabular dataset or records.
+- 'data': The user asks to visualize, chart, plot, graph, generate charts (bar, line, scatter, pie, donut, KPI metrics), profile, inspect, clean, or summarize a tabular dataset or records.
 - 'ml': The user asks to train a machine learning model, evaluate ML metrics, or generate model predictions.
 - 'general': General greeting, casual conversation, or queries that do not require tools and no documents are attached.
 
@@ -117,19 +117,14 @@ class SupervisorRouter:
 
         Precedence:
         1. Explicit image analysis -> multimodal
-        2. Explicit controlled ML train / predict intent -> ml
-        3. Explicit dataset profiling / CSV intent -> data
-        4. Explicit document / section reference intent -> rag
+        2. Explicit visualization / charting intent -> data
+        3. Explicit controlled ML train / predict intent -> ml
+        4. Explicit dataset profiling / CSV intent -> data
         5. Deterministic conversational / identity intents -> general
-        6. Return None to allow Gemini supervisor routing
+        6. Explicit document / section reference intent -> rag
+        7. Return None to allow Gemini supervisor routing
         """
         q = query.lower().strip()
-
-        # Defer to Gemini/heuristic if the request combines multiple specialists (e.g., Data + ML)
-        has_data = any(w in q for w in ("profile", "dataset", "columns", "csv", "tabular"))
-        has_ml = any(w in q for w in ("train", "model", "classifier", "regressor", "accuracy", "predict"))
-        if has_data and has_ml:
-            return None
 
         # 1. Explicit visual image analysis
         if any(phrase in q for phrase in (
@@ -137,17 +132,35 @@ class SupervisorRouter:
         )):
             return RouteDecision(route="multimodal", reason="Deterministic image-analysis request", confidence=1.0)
 
-        # 2. Explicit controlled ML train / predict intent
-        if any(phrase in q for phrase in (
-            "train a model", "train the model", "train a classifier", "train a regressor", "model accuracy",
-        )) or re.search(r"\b(?:predict|predictions?|predicting|inference|score sample|evaluate sample)\b", q):
-            return RouteDecision(route="ml", reason="Deterministic machine-learning request", confidence=1.0)
+        # 2. Explicit dataset profiling intent (including cross-specialist profiling -> ML workflows)
+        has_explicit_profiling = any(phrase in q for phrase in (
+            "profile this", "profile the", "profile dataset", "profile tabular", "inspect this csv", "what columns", "show columns",
+        )) or bool(re.search(r"\bprofile\s+(?:this|the|tabular|dataset|csv)\b", q))
 
-        # 3. Explicit dataset profiling / CSV intent
-        if any(phrase in q for phrase in (
-            "profile this dataset", "profile the dataset", "what columns", "show columns", "inspect this csv",
-        )):
-            return RouteDecision(route="data", reason="Deterministic dataset request", confidence=1.0)
+        # 3. Explicit visualization / charting intent (takes precedence over generic dataset/ML heuristics when no explicit training/prediction is requested)
+        has_explicit_viz = any(phrase in q for phrase in (
+            "plot ", "chart", "visualize", "visualise", "visualization", "visualisation",
+            "histogram", "scatter", "bar chart", "line chart", "pie chart", "donut",
+            "show as a chart", "show as chart", "show the data as a chart", "show data as a chart",
+            "useful visualizations", "different useful visualizations", "generate visualizations",
+            "create visualizations", "trend over time", "distribution of",
+        )) or bool(re.search(r"\b(?:plot|chart|graph|visualize|visualise)\s+(?:the\s+)?(?:data|dataset|revenue|sales|salary|employees?|value|temperature|height|weight|[a-z0-9_]+)\b", q))
+
+        has_explicit_ml_training = any(phrase in q for phrase in (
+            "train a model", "train the model", "train a classifier", "train a regressor", "fit a model", "fit the model",
+            "train classification", "train regression", "model accuracy",
+        )) or bool(re.search(r"\b(?:train|retrain|fit)\s+(?:a\s+)?(?:new\s+)?(?:classification\s+|regression\s+)?(?:model|classifier|regressor)\b", q))
+
+        has_explicit_ml_prediction = bool(re.search(r"\b(?:predict|predictions?|predicting|inference|score sample|evaluate sample)\b", q)) and not any(w in q for w in ("predicting a chart", "predict a chart"))
+
+        if has_explicit_profiling:
+            return RouteDecision(route="data", reason="Deterministic dataset profiling request", confidence=1.0)
+
+        if has_explicit_viz and not (has_explicit_ml_training or has_explicit_ml_prediction):
+            return RouteDecision(route="data", reason="Deterministic dataset visualization request", confidence=1.0)
+
+        if has_explicit_ml_training or has_explicit_ml_prediction:
+            return RouteDecision(route="ml", reason="Deterministic machine-learning request", confidence=1.0)
 
         # 4. Explicit personal facts and conversational identity (runs before document phrase matching)
         if any(q.startswith(greeting) for greeting in (
@@ -203,11 +216,11 @@ class SupervisorRouter:
             return RouteDecision(route="general", reason="Conversational greeting", confidence=1.0)
         if re.search(r"\b(?:dog|pet|project|my\s+name|who\s+am\s+i|your\s+name)\b", q):
             return RouteDecision(route="general", reason="Conversational personal context", confidence=1.0)
-        if any(w in q for w in ["profile", "dataset", "columns", "rows", "csv", "tabular"]):
-            return RouteDecision(route="data", reason="Keyword match for Data profiling", confidence=0.8)
+        if any(w in q for w in ["profile", "dataset", "columns", "rows", "csv", "tabular", "plot", "histogram", "scatter", "bar chart", "line chart", "pie chart", "donut", "chart"]):
+            return RouteDecision(route="data", reason="Keyword match for Data profiling & visualization", confidence=0.8)
         if any(w in q for w in ["train", "predict", "classifier", "regressor", "accuracy", "model"]):
             return RouteDecision(route="ml", reason="Keyword match for Machine Learning", confidence=0.8)
-        if any(w in q for w in ["image", "photo", "picture", "visual", "chart"]):
+        if any(w in q for w in ["image", "photo", "picture", "screenshot"]):
             return RouteDecision(route="multimodal", reason="Keyword match for Multimodal", confidence=0.8)
         if has_documents or any(w in q for w in ["pdf", "document", "policy", "handbook", "evidence", "citation"]):
             return RouteDecision(route="rag", reason="Active document or keyword match for document RAG", confidence=0.8)

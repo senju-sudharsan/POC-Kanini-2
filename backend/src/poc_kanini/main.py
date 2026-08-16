@@ -200,6 +200,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
         synthesis_status=result.get("synthesis_status") or "success",
         reports=result.get("reports") or [],
         actions=result.get("actions") or [],
+        visualizations=result.get("visualizations") or [],
     )
 
 

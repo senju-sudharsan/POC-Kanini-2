@@ -5,10 +5,11 @@ import ReactMarkdown from "react-markdown";
 import type { ProcessedEvent } from "@/components/ActivityTimeline";
 import { ToolResultCard } from "@/components/ToolResultCard";
 import { ReportCard } from "@/components/ReportCard";
+import { ChartRenderer } from "@/components/ChartRenderer";
 import { ApprovalCard } from "@/components/ApprovalCard";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type { ChatMessage, Citation, ToolResult, ReportPayload, ImageAttachment, SynthesisStatus } from "@/lib/chat";
+import type { ChatMessage, Citation, ToolResult, ReportPayload, ImageAttachment, SynthesisStatus, VisualizationPayload } from "@/lib/chat";
 
 export interface ExtendedChatMessage extends ChatMessage {
   citations?: Citation[];
@@ -16,6 +17,7 @@ export interface ExtendedChatMessage extends ChatMessage {
   warnings?: string[];
   synthesisStatus?: SynthesisStatus;
   reports?: ReportPayload[];
+  visualizations?: VisualizationPayload[];
   attachments?: ImageAttachment[];
   approvalRequired?: boolean;
   approvalId?: string;
@@ -142,6 +144,7 @@ export function ChatMessagesView({
                 synthesisStatus={message.synthesisStatus}
               />
               <ReportCard reports={message.reports} />
+              <ChartRenderer visualizations={message.visualizations} />
 
               <div className="flex items-center justify-end mt-2">
                 <Button

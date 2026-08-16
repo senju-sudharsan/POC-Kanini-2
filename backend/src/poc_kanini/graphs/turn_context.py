@@ -92,8 +92,13 @@ def get_current_turn_ml_results(state: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def get_current_turn_data_results(state: dict[str, Any]) -> list[dict[str, Any]]:
-    """Get current turn's dataset profiling tool results."""
-    return [t for t in get_current_turn_tools(state) if t.get("tool") == "profile_dataset_tool"]
+    """Get current turn's dataset profiling and visualization tool results."""
+    return [t for t in get_current_turn_tools(state) if t.get("tool") in ("profile_dataset_tool", "visualize_dataset_tool")]
+
+
+def get_current_turn_visualization_results(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Get current turn's dataset visualization tool results."""
+    return [t for t in get_current_turn_tools(state) if t.get("tool") == "visualize_dataset_tool"]
 
 
 def get_current_turn_multimodal_results(state: dict[str, Any]) -> list[dict[str, Any]]:

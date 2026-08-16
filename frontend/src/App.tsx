@@ -119,6 +119,7 @@ export default function App() {
           warnings: res.warnings,
           synthesisStatus: res.synthesis_status,
           reports: res.reports,
+          visualizations: res.visualizations,
           approvalRequired: res.approval_required,
           approvalId: res.approval_id || undefined,
           approvalReason: res.approval_reason || undefined,

@@ -88,7 +88,7 @@ async def reflection_node(state: AgentConversationState) -> dict[str, Any]:
             "activities": activities,
         }
 
-    # If already approved or rejected, record the decision
+    # If already approved or rejected, record the decision and proceed normally
     if approval_status in ("approved", "rejected"):
         activities.append(
             ActivityEvent(

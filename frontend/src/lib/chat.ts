@@ -22,6 +22,25 @@ export type ReportPayload = {
   recommendations?: string[];
 };
 
+export type KpiCard = {
+  label: string;
+  value: string | number;
+  subtext?: string | null;
+};
+
+export type VisualizationPayload = {
+  chart_type: "bar" | "line" | "pie" | "donut" | "scatter" | "table" | "kpi";
+  title: string;
+  description?: string;
+  x_field?: string | null;
+  y_field?: string | null;
+  series_field?: string | null;
+  data?: Record<string, any>[];
+  kpis?: KpiCard[];
+  columns?: string[];
+  error?: string | null;
+};
+
 export type ActionResult = { action_type: string; status: string; summary: string; metadata?: Record<string, unknown> };
 export type SynthesisStatus = "success" | "degraded" | "quota_exhausted";
 
@@ -39,6 +58,7 @@ export type ChatResponse = {
   synthesis_status?: SynthesisStatus;
   reports?: ReportPayload[];
   actions?: ActionResult[];
+  visualizations?: VisualizationPayload[];
 };
 
 type DocumentChatResponse = { answer: string; citations: { label: string }[] };

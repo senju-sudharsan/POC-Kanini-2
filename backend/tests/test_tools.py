@@ -30,11 +30,12 @@ from poc_kanini.tools import (
 
 
 def test_tool_registry_exports() -> None:
-    """Registry must export exactly the 5 planned tools with names & descriptions."""
-    assert len(ALL_TOOLS) == 5
+    """Registry must export the planned tools with names & descriptions."""
+    assert len(ALL_TOOLS) == 6
     expected_names = {
         "search_document_evidence",
         "profile_dataset_tool",
+        "visualize_dataset_tool",
         "train_ml_model_tool",
         "predict_ml_model_tool",
         "analyze_image_tool",
