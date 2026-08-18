@@ -109,13 +109,13 @@ class VisualizationService:
             if specs:
                 return [s.model_dump() for s in specs]
 
-        # Handle generic multi-visualization requests: e.g., "Give me 3 useful visualizations from this dataset"
-        m_multi = re.search(r"\b(?:give\s+me|generate|show|create)\s+([2-5]|two|three|four|five)\s+(?:[a-z]+\s+)*(?:visualizations?|charts?|plots?)\b", q_lower)
+        # Handle generic multi-visualization requests: e.g., "Give me 5 useful visualizations based on this dataset", "Give me 5 charts", "create 3 visualizations"
+        m_multi = re.search(r"\b(?:give\s+me\s+|generate\s+|show\s+|create\s+)?([2-5]|two|three|four|five)\s+(?:[a-z]+\s+)*(?:visualizations?|charts?|plots?|graphs?)\b", q_lower)
         if m_multi and not clauses:
             word_map = {"two": 2, "three": 3, "four": 4, "five": 5}
             token = m_multi.group(1).lower()
             num_charts = word_map.get(token, int(token) if token.isdigit() else 3)
-            return self._generate_multi_visualizations(df, num_charts)
+            return self._generate_multi_visualizations(df, num_charts=num_charts, query=query)
 
         # Single visualization resolution
         spec = self._visualize_single_clause(
@@ -633,44 +633,115 @@ class VisualizationService:
             columns=list(clean_df.columns),
         )
 
-    def _generate_multi_visualizations(self, df: pd.DataFrame, num_charts: int = 3) -> list[dict[str, Any]]:
-        """Generate multiple diverse, grounded visualization specifications for comprehensive analysis."""
-        specs = []
+    def _generate_multi_visualizations(
+        self,
+        df: pd.DataFrame,
+        num_charts: int = 3,
+        query: str = "",
+    ) -> list[dict[str, Any]]:
+        """Generate multiple diverse, grounded visualization specifications for comprehensive analysis.
+
+        Builds a sequential candidate pool of distinct, schema-validated visualization candidates,
+        deduplicating equivalent charts and prioritizing graphical charts when explicitly requested.
+        """
+        q_lower = query.lower()
+        wants_pure_charts = bool(re.search(r"\b(?:charts?|plots?|graphs?)\b", q_lower)) and not bool(re.search(r"\b(?:visualizations?|summary|kpis?|metrics?)\b", q_lower))
+
         dt_cols = self._detect_datetime_columns(df)
         numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c]) and c not in dt_cols]
         # Meaningful categorical columns (exclude ID columns)
         categorical_cols = [c for c in df.columns if c not in numeric_cols and c not in dt_cols and not self._is_id_column(c, df)]
-        if not categorical_cols:
-            categorical_cols = [c for c in df.columns if c not in numeric_cols and c not in dt_cols]
 
         # 1. KPI summary card
-        specs.append(self._build_single_visualization(df, "kpi", None, None, "kpi summary"))
+        kpi_cand = self._build_single_visualization(df, "kpi", None, None, "kpi summary")
 
-        # 2. Categorical distribution / Bar chart
+        # 2. Primary Categorical Bar chart
+        bar_primary = None
         if categorical_cols and numeric_cols:
-            specs.append(self._build_single_visualization(
+            bar_primary = self._build_single_visualization(
                 df, "bar", categorical_cols[0], numeric_cols[0], f"Total {numeric_cols[0]} by {categorical_cols[0]}"
-            ))
+            )
         elif categorical_cols:
-            specs.append(self._build_single_visualization(
-                df, "bar", categorical_cols[0], "count", f"Order Counts by {categorical_cols[0]}"
-            ))
+            bar_primary = self._build_single_visualization(
+                df, "bar", categorical_cols[0], "count", f"Distribution of {categorical_cols[0]}"
+            )
 
-        # 3. Time trend (if temporal) OR Scatter plot OR Pie chart
-        if len(specs) < num_charts:
-            if dt_cols:
-                specs.append(self._build_single_visualization(
-                    df, "line", dt_cols[0], numeric_cols[0] if numeric_cols else "count", f"Trend over {dt_cols[0]}"
-                ))
-            elif len(numeric_cols) >= 2:
-                specs.append(self._build_single_visualization(
-                    df, "scatter", numeric_cols[0], numeric_cols[1], f"Relationship between {numeric_cols[0]} and {numeric_cols[1]}"
-                ))
-            elif len(categorical_cols) > 1 and df[categorical_cols[1]].nunique() <= 8:
-                specs.append(self._build_single_visualization(
-                    df, "pie", categorical_cols[1], "count", f"Breakdown of {categorical_cols[1]}"
-                ))
-            else:
-                specs.append(self._build_single_visualization(df, "table", None, None, "Data Table Preview"))
+        # 3. Temporal Line chart (if temporal column exists)
+        line_cand = None
+        if dt_cols:
+            line_cand = self._build_single_visualization(
+                df, "line", dt_cols[0], numeric_cols[0] if numeric_cols else "count", f"Trend over {dt_cols[0]}"
+            )
 
-        return [s.model_dump() for s in specs[:num_charts]]
+        # 4. Numeric Scatter chart (if 2+ numeric columns exist)
+        scatter_cand = None
+        if len(numeric_cols) >= 2:
+            scatter_cand = self._build_single_visualization(
+                df, "scatter", numeric_cols[0], numeric_cols[1], f"Relationship between {numeric_cols[0]} and {numeric_cols[1]}"
+            )
+
+        # 5. Categorical Pie / Donut chart (if categorical column with <= 8 categories exists)
+        pie_cand = None
+        pie_col = None
+        if len(categorical_cols) > 1 and df[categorical_cols[1]].nunique() <= 8:
+            pie_col = categorical_cols[1]
+        elif categorical_cols and df[categorical_cols[0]].nunique() <= 8:
+            pie_col = categorical_cols[0]
+        if pie_col:
+            pie_cand = self._build_single_visualization(
+                df, "pie", pie_col, "count", f"Breakdown of {pie_col}"
+            )
+
+        # 6. Secondary metric or dimension Bar chart (if additional numeric or categorical columns exist)
+        secondary_bar = None
+        if len(numeric_cols) >= 2 and categorical_cols:
+            secondary_bar = self._build_single_visualization(
+                df, "bar", categorical_cols[0], numeric_cols[1], f"Total {numeric_cols[1]} by {categorical_cols[0]}"
+            )
+        elif len(categorical_cols) >= 2 and numeric_cols:
+            secondary_bar = self._build_single_visualization(
+                df, "bar", categorical_cols[1], numeric_cols[0], f"Total {numeric_cols[0]} by {categorical_cols[1]}"
+            )
+
+        # 7. Table preview
+        table_cand = self._build_single_visualization(df, "table", None, None, "Data Table Preview")
+
+        # Assemble candidate pool based on whether pure graphical charts vs generic visualizations are requested
+        if wants_pure_charts:
+            ordered_candidates = [
+                bar_primary,
+                line_cand,
+                scatter_cand,
+                pie_cand,
+                secondary_bar,
+                kpi_cand,
+                table_cand,
+            ]
+        else:
+            ordered_candidates = [
+                kpi_cand,
+                bar_primary,
+                line_cand,
+                scatter_cand,
+                pie_cand,
+                secondary_bar,
+                table_cand,
+            ]
+
+        # Deduplicate and validate against dataset
+        specs: list[VisualizationPayload] = []
+        seen_signatures: set[tuple[str, str | None, str | None]] = set()
+
+        for cand in ordered_candidates:
+            if cand is None or cand.error:
+                continue
+            sig = (cand.chart_type, cand.x_field, cand.y_field)
+            if sig in seen_signatures:
+                continue
+            seen_signatures.add(sig)
+            specs.append(cand)
+            if len(specs) >= num_charts:
+                break
+
+        return [s.model_dump() for s in specs]
+

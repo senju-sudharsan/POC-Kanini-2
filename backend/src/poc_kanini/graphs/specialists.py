@@ -1065,6 +1065,17 @@ async def synthesize_node(state: AgentConversationState) -> dict[str, Any]:
                                 summaries.append(f"**{v_title}** ({ctype})\n{v_desc}\n\n{data_preview}")
                             else:
                                 summaries.append(f"**{v_title}** ({ctype})\n{v_desc}")
+
+                    # If the user explicitly asked for more visualizations/charts than the dataset supports, explain honestly
+                    m_cnt = re.search(r"\b([2-5]|two|three|four|five)\s+(?:[a-z]+\s+)*(?:visualizations?|charts?|plots?)\b", user_query.lower())
+                    if m_cnt:
+                        word_map = {"two": 2, "three": 3, "four": 4, "five": 5}
+                        tok = m_cnt.group(1).lower()
+                        requested_n = word_map.get(tok, int(tok) if tok.isdigit() else 0)
+                        if requested_n > len(viz_list) and len(viz_list) > 0:
+                            summaries.append(
+                                f"The dataset supports {len(viz_list)} meaningful visualization(s). Additional charts were not generated because the dataset lacks additional categorical or temporal dimensions."
+                            )
             elif t == "train_ml_model_tool":
                 if item.get("error"):
                     summaries.append(f"Model Training: Not completed due to an error ({item.get('error')}).")

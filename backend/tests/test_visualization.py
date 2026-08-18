@@ -1,13 +1,31 @@
 """Comprehensive tests for Phase A General-Purpose Data Visualization engine and graph integration."""
 
 import io
+from unittest.mock import AsyncMock, MagicMock, patch
 import pandas as pd
 import pytest
+from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
 from poc_kanini.main import app
 from poc_kanini.services.visualization_service import VisualizationService
 from poc_kanini.tools.visualization_tools import visualize_dataset_tool
+
+@pytest.fixture(autouse=True)
+def mock_gemini_client():
+    mock_resp = MagicMock()
+    mock_resp.text = "Visualizations computed and rendered successfully from the dataset."
+    with patch(
+        "poc_kanini.graphs.specialists.genai.Client",
+        return_value=MagicMock(
+            aio=MagicMock(
+                models=MagicMock(
+                    generate_content=AsyncMock(return_value=mock_resp)
+                )
+            )
+        ),
+    ):
+        yield
 
 # Sample Multi-Domain Datasets
 DATASET_1_SALES = (
@@ -497,4 +515,128 @@ def test_e2e_chat_endpoint_honors_order_status_in_payload():
         assert viz["x_field"] == "order_status"
         status_map = {d["label"]: d["value"] for d in viz["data"]}
         assert status_map.get("delivered") == 4
+
+
+# ===========================================================================
+# Multi-Visualization Candidate Pool & Grounding Tests (Phase A Final Fix)
+# ===========================================================================
+
+RICH_SYNTHETIC_CSV = """category,timestamp,sales,profit,units_sold
+Electronics,2026-01-01,15000,3200,45
+Furniture,2026-01-02,8200,1400,20
+Clothing,2026-01-03,12400,4100,85
+Electronics,2026-02-01,18500,4200,55
+Furniture,2026-02-02,9100,1800,22
+Clothing,2026-02-03,14200,4900,90
+"""
+
+def test_generic_five_visualizations_on_rich_dataset():
+    """Test 1 — Generic 5 visualization request on a rich dataset produces 5 distinct, valid payloads."""
+    service = VisualizationService()
+    res = service.visualize(RICH_SYNTHETIC_CSV, query="Give me 5 useful visualizations based on this dataset.")
+    assert len(res) == 5, f"Expected 5 visualizations, got {len(res)}"
+    
+    types = [v["chart_type"] for v in res]
+    # Check that diverse types are generated (e.g. kpi, bar, line, scatter, pie)
+    assert len(set(types)) >= 4, f"Expected at least 4 distinct chart types, got {set(types)}"
+    
+    # Ensure no duplicate signatures (chart_type, x_field, y_field)
+    signatures = [(v["chart_type"], v.get("x_field"), v.get("y_field")) for v in res]
+    assert len(signatures) == len(set(signatures)), f"Found duplicate chart signatures: {signatures}"
+    
+    # All values must come from deterministic calculations
+    for v in res:
+        assert v.get("error") is None
+        if v["chart_type"] != "kpi":
+            assert len(v.get("data", [])) > 0
+
+
+def test_five_visualizations_on_olist_dataset():
+    """Test 2 — Olist dataset produces 5 distinct grounded visualizations (KPI, Bar, Line, Scatter, Pie)."""
+    service = VisualizationService()
+    res = service.visualize(SAMPLE_OLIST_CSV, query="Give me 5 useful visualizations based on this dataset.")
+    assert len(res) == 5, f"Expected 5 visualizations on Olist, got {len(res)}"
+    
+    chart_types = [v["chart_type"] for v in res]
+    assert "kpi" in chart_types
+    assert "bar" in chart_types
+    assert "line" in chart_types
+    assert "scatter" in chart_types
+    assert "pie" in chart_types
+    
+    # Validate specific groundings
+    bar_v = next(v for v in res if v["chart_type"] == "bar")
+    assert bar_v["x_field"] == "order_status"
+    
+    line_v = next(v for v in res if v["chart_type"] == "line")
+    assert line_v["x_field"] == "order_purchase_timestamp"
+    
+    scatter_v = next(v for v in res if v["chart_type"] == "scatter")
+    assert {scatter_v["x_field"], scatter_v["y_field"]} == {"payment_value", "freight_value"}
+
+
+def test_dataset_with_insufficient_dimensions_honestly_returns_fewer():
+    """Test 3 — Dataset with insufficient dimensions does not fabricate fake columns and honestly returns fewer."""
+    low_dim_csv = """patient_id,height_cm,weight_kg
+P001,170,65
+P002,180,80
+P003,165,55
+"""
+    service = VisualizationService()
+    res = service.visualize(low_dim_csv, query="Give me 5 useful visualizations based on this dataset.")
+    # Must NOT fabricate fake columns or duplicate charts to reach 5
+    assert len(res) < 5
+    assert len(res) == 3  # KPI + Scatter + Table Preview
+    
+    # Must NOT group on unique identifier patient_id
+    for v in res:
+        if v["chart_type"] in ("bar", "pie"):
+            assert v.get("x_field") != "patient_id"
+
+
+def test_explicit_five_charts_prioritizes_graphical_charts_over_kpi():
+    """Test 4 — 'Give me 5 charts' prioritizes graphical charts before KPI cards."""
+    service = VisualizationService()
+    res = service.visualize(SAMPLE_OLIST_CSV, query="Give me 5 charts based on this dataset.")
+    assert len(res) == 5
+    
+    # The first 4 must be pure graphical charts
+    for i in range(4):
+        assert res[i]["chart_type"] in ("bar", "line", "scatter", "pie", "donut")
+    
+    # The 5th is also a graphical chart (secondary bar) on Olist
+    assert res[4]["chart_type"] in ("bar", "line", "scatter", "pie", "donut", "kpi")
+
+
+def test_candidate_pool_deduplicates_and_never_repeats_identical_charts():
+    """Test 5 — High requested count cannot return duplicate identical chart specifications."""
+    service = VisualizationService()
+    res = service.visualize(DATASET_1_SALES, query="Give me 5 useful visualizations based on this dataset.")
+    # DATASET_1_SALES has product (cat), revenue (num), units_sold (num)
+    # Signatures must be 100% unique
+    signatures = [(v["chart_type"], v.get("x_field"), v.get("y_field")) for v in res]
+    assert len(signatures) == len(set(signatures)), f"Found duplicate signatures: {signatures}"
+
+
+def test_e2e_five_visualizations_reach_chat_response():
+    """Test 6 — End-to-end /api/chat produces 5 visualization payloads in ChatResponse with single-turn synthesis."""
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/chat",
+            json={
+                "messages": [{"role": "user", "content": "Give me 5 useful visualizations based on this dataset."}],
+                "csv_data": SAMPLE_OLIST_CSV,
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["approval_required"] is False
+        vizs = payload.get("visualizations", [])
+        assert len(vizs) == 5, f"Expected 5 visualizations in ChatResponse, got {len(vizs)}"
+        
+        # Verify tool results in response
+        tools_run = [t.get("tool") for t in payload.get("tool_results", [])]
+        assert "visualize_dataset_tool" in tools_run
+        assert "train_ml_model_tool" not in tools_run
+
 
